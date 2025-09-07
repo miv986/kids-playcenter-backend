@@ -1,16 +1,21 @@
 import express from 'express';
 import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
-import { corsMiddleware } from './middleware/cors.js';
-import healthRoutes from './routes/health.js';
-import apiRoutes from './routes/api.js';
-import authRoutes from './routes/auth.js';
-import apiBookings from './routes/bookings.js';
+import { corsMiddleware } from './middleware/cors';
+import apiRoutes from './routes/api';
+import authRoutes from './routes/auth';
+import apiBookings from './routes/bookings';
+import { PrismaClient } from '@prisma/client';
+const client = new PrismaClient();
+
+
+
 
 // Configurar variables de entorno
 dotenv.config();
 
 const app = express();
+
 const PORT = process.env.PORT || 4000;
 
 // Middleware
@@ -25,7 +30,6 @@ app.use((req, res, next) => {
 });
 
 // Rutas
-app.use('/health', healthRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/bookings', apiBookings)
@@ -49,7 +53,7 @@ app.get('/', (req, res) => {
 });
 
 // Manejo de errores global
-app.use((err, req, res, next) => {
+app.use((err: any, req: any, res: any, next: any) => {
   console.error('Error:', err.stack);
   res.status(500).json({
     error: 'Something went wrong!',
@@ -66,9 +70,8 @@ app.use((req, res) => {
 });
 
 // Iniciar servidor
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📱 CORS enabled for: http://localhost:3000`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`📡 API endpoints: http://localhost:${PORT}/api`);
 });

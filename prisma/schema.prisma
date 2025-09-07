@@ -1,0 +1,45 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enum para el rol del usuario
+enum Role {
+  USER
+  ADMIN
+}
+
+// Tabla de usuarios
+model User {
+  id             Int       @id @default(autoincrement())
+  name           String
+  surname        String
+  email          String    @unique
+  phone_number   String?
+  role           Role      @default(USER)
+  password       String
+  isEmailVerified Boolean  @default(false) // <-- campo para verificación de email
+  emailVerifyToken String? // <-- token temporal para confirmar email
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  bookings       Booking[] // Relación 1 a muchos con Bookings
+}
+// Tabla de reservas
+model Booking {
+  id               Int      @id @default(autoincrement())
+  number_of_kinds  Int
+  contact_number   String
+  type_of_package  String
+  comments         String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id])
+}
