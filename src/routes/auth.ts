@@ -9,11 +9,16 @@ import crypto from "crypto";
 import { sendEmail } from "../service/mailing";
 import { validateDTO } from "../middleware/validation";
 import { RegisterDTO } from "../dtos/RegisterDTO";
+import { authenticateUser } from "../middleware/auth";
 
 // Función para generar JWT
 const generateToken = (userId: number, role: string) => {
   return jwt.sign({ userId, role }, process.env.JWT_SECRET!, { expiresIn: "1h" });
 };
+
+router.get("/me", authenticateUser, async (req: any, res) => {
+  res.json(req.user);
+});
 
 // POST /api/auth/login
 router.post("/login", async (req, res) => {

@@ -33,18 +33,34 @@ router.post("/", authenticateUser, validateDTO(CreateBookingDTO), async (req: an
 
 //LISTAR RESERVAS
 router.get("/", authenticateUser, async (req: any, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
     try {
-        const user_id = req.user.id;  // Obtener user_id del token verificado
         const userBookings = await prisma.booking.findMany({
-            where: {
-                userId: user_id
-            }
-        })
+            include: { user: true },
+        });
         res.json(userBookings); // devolvemos todas las reservas
     } catch (err) {
         console.error("Error en GET /bookings:", err);
         res.status(500).json({ error: "Internal server error" });
     }
 });
+
+
+
+router.get('/my', authenticateUser, async (req: any, res) => {
+    try {
+        const user_id = req.user.id;  // Obtener user_id del token verificado
+        const bookings = await prisma.booking.findMany({
+            where: { userId: user_id },
+        });
+        res.json(bookings);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 
 export default router;

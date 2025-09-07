@@ -5,8 +5,8 @@
   "private": true,
   "scripts": {
     "build": "tsc",
-    "start": "tsc && node dist/server.js",
-    "dev": "ts-node-dev src/server.ts",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
     "postbuild": "npm run generate",
     "generate": "prisma generate",
     "postinstall": "npm run generate",
@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "@supabase/supabase-js": "^2.57.2",
     "bcrypt": "^6.0.0",
     "body-parser": "^1.20.3",
     "class-transformer": "^0.5.1",
