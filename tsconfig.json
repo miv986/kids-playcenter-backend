@@ -6,6 +6,8 @@
     "emitDecoratorMetadata": true,
     "esModuleInterop": true,
     "strict": true,
+    "outDir": "./dist",      // aquí van los archivos compilados
+    "rootDir": "./src",      // tus archivos fuente están en src/
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   }
