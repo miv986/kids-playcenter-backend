@@ -4,10 +4,10 @@
   "type": "commonjs",
   "private": true,
   "scripts": {
-    "dev": "ts-node src/server.ts",
     "build": "tsc",
+    "start": "tsc && node dist/server.js",
+    "dev": "ts-node-dev src/server.ts",
     "postbuild": "npm run generate",
-    "start": "node dist/server.js",
     "generate": "prisma generate",
     "postinstall": "npm run generate",
     "migrate:dev": "prisma migrate dev"
