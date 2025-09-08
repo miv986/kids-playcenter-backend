@@ -37,18 +37,13 @@ app.use('/api/bookings', apiBookings)
 // Ruta raíz
 app.get('/', (req, res) => {
   res.json({
-    message: 'Express.js Backend with Supabase',
+    message: 'Kids Playcenter Backend',
     version: '1.0.0',
     endpoints: {
-      health: '/health',
       api: '/api',
       auth: '/api/auth',
       apiBookings: '/api/bookings',
     },
-    supabase: {
-      url: process.env.SUPABASE_URL ? 'configured' : 'not configured',
-      serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'not configured'
-    }
   });
 });
 
