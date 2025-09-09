@@ -13,6 +13,7 @@ datasource db {
 // Enum para el rol del usuario
 enum Role {
   USER
+  CHILD
   ADMIN
 }
 
@@ -21,15 +22,32 @@ model User {
   id             Int       @id @default(autoincrement())
   name           String
   surname        String
-  email          String    @unique
+  email          String?    @unique
   phone_number   String?
+  emergency_phone_1  String?   // primer teléfono de emergencia
+  emergency_contact_name_1 String?
+  emergency_phone_2  String?   // segundo teléfono de emergencia
+  emergency_contact_name_2 String?
   role           Role      @default(USER)
-  password       String
+  password       String?
   isEmailVerified Boolean  @default(false) // <-- campo para verificación de email
   emailVerifyToken String? // <-- token temporal para confirmar email
+  notes              String?
+  dateOfBirth        DateTime? // útil para hijos
+  allergies          String?
+  medicalNotes       String?
+
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+
+  //Relación con bookings
   bookings       Booking[] // Relación 1 a muchos con Bookings
+
+  //Relación tutor-hijo
+  children           User[]    @relation("TutorChildren")        // los hijos que tiene este tutor
+  tutorId            Int?                                          
+  tutor              User?     @relation("TutorChildren", fields: [tutorId], references: [id])
+
 }
 // Tabla de reservas
 model Booking {

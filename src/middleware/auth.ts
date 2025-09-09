@@ -40,6 +40,10 @@ export const authenticateUser = async (req: any, res: any, next: any) => {
         if (!user.isEmailVerified) {
             return res.status(401).json({ error: "Usuario no verificado!" })
         }
+        if (user.role !== "USER" && user.role !== "ADMIN") {
+            return res.status(401).json({ error: 'Solo un tutor puede añadir hijos' });
+
+        }
 
         // Adjuntamos el usuario al request
         req.user = user;

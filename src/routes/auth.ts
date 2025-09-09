@@ -29,6 +29,13 @@ router.post("/login", async (req, res) => {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
+    if (user.role !== "ADMIN" && user.role !== "USER") {
+      return res.status(403).json({ error: "Este tipo de usuario no puede iniciar sesión" });
+    }
+     // Validar que tenga password
+     if (!user.password) {
+      return res.status(403).json({ error: "Usuario no tiene contraseña configurada" });
+    }
     // Verificar contraseña
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) return res.status(401).json({ error: "Invalid credentials" });
