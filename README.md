@@ -1,7 +1,3 @@
-
----
-
-```markdown
 # Web Ludoteca – Backend
 
 ## Descripción
