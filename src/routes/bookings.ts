@@ -3,25 +3,43 @@ import { authenticateUser } from "../middleware/auth";
 const router = express.Router();
 import { PrismaClient } from "@prisma/client";
 import { validateDTO } from "../middleware/validation";
-import { CreateBookingDTO } from "../dtos/CreateBookingDTO";
+import { CreateBirthdayBookingDTO } from "../dtos/CreateBirthdayBookingDTO";
 const prisma = new PrismaClient();
 
 //
 // BOOKINGS
 //
 
-//CREAR RESERVA
-router.post("/", authenticateUser, validateDTO(CreateBookingDTO), async (req: any, res: any) => {
+//CREAR RESERVA CUMPLEAÑOS
+router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), async (req: any, res: any) => {
+    const { guest, number_of_kids, phone, pack, comments, slotId, guestEmail } = req.body;
+    const slot = await prisma.birthdaySlot.findUnique({
+        where: { id: slotId },
+        include: { booking: true } // para verificar si ya tiene reserva
+    });
+
+    if (!slot) {
+        return res.status(404).json({ error: "Slot no encontrado" });
+    }
+
+    if (slot.booking) {
+        return res.status(400).json({ error: "Este slot ya está reservado" });
+    }
+
+    if (slot.status !== "OPEN") {
+        return res.status(400).json({ error: "Este slot no está disponible" });
+    }
     try {
-        const { number_of_kids, phone, pack, comments } = req.body;
-        const user_id = req.user.id;  // Obtener user_id del token verificado
-        const addedBookings = await prisma.booking.create({
+        const addedBookings = await prisma.birthdayBooking.create({
             data: {
-                number_of_kinds: number_of_kids,
+                guest: guest,
+                guestEmail,
+                number_of_kids: number_of_kids,
                 contact_number: phone,
-                type_of_package: pack,
                 comments,
-                userId: user_id
+                packageType: pack,
+                slot: { connect: { id: slotId } }
+
             }
         })
         res.json(addedBookings);
@@ -31,6 +49,163 @@ router.post("/", authenticateUser, validateDTO(CreateBookingDTO), async (req: an
     }
 });
 
+// GET BirthdayBooking por ID
+router.get("getBirthdayBooking/:id", authenticateUser, async (req: any, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const { id } = req.params;
+
+    try {
+        const booking = await prisma.birthdayBooking.findUnique({
+            where: { id: Number(id) },
+            include: { slot: true }
+        });
+
+        if (!booking) {
+            return res.status(404).json({ error: "Reserva no encontrada" });
+        }
+
+        res.json(booking);
+    } catch (err) {
+        console.error("Error en GET /bookings/:id:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// GET BirthdayBookings por fecha
+router.get("getBirthdayBooking/by-date/:date", authenticateUser, async (req: any, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const { date } = req.params;
+    const targetDate = new Date(date);
+
+    // Ajuste para obtener todas las reservas del día completo
+    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+
+    try {
+        const bookings = await prisma.birthdayBooking.findMany({
+            where: {
+                slot: {
+                    date: {
+                        gte: startOfDay,
+                        lte: endOfDay
+                    }
+                }
+            },
+            include: { slot: true }
+        });
+
+        res.json(bookings);
+    } catch (err) {
+        console.error("Error en GET /bookings/by-date/:date:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+
+// UPDATE BirthdayBooking
+router.put("updateBirthdayBooking/:id", authenticateUser, async (req: any, res: any) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const { id } = req.params;
+    const { guest, number_of_kids, phone, pack, comments, status, slotId } = req.body;
+
+    try {
+        // Validar slot si se quiere cambiar
+        if (slotId) {
+            const slot = await prisma.birthdaySlot.findUnique({
+                where: { id: slotId },
+                include: { booking: true }
+            });
+            if (!slot) return res.status(404).json({ error: "Slot no encontrado" });
+            if (slot.booking && slot.booking.id !== Number(id)) {
+                return res.status(400).json({ error: "Este slot ya está reservado" });
+            }
+            if (slot.status !== "OPEN") return res.status(400).json({ error: "Este slot no está disponible" });
+        }
+
+        const updatedBooking = await prisma.birthdayBooking.update({
+            where: { id: Number(id) },
+            data: {
+                guest,
+                number_of_kids,
+                contact_number: phone,
+                comments,
+                packageType: pack,
+                status,
+                ...(slotId && { slot: { connect: { id: slotId } } }) // solo si cambias slot
+            }
+        });
+
+        res.json(updatedBooking);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+
+// DELETE BirthdayBooking
+router.delete("deleteBirthdayBooking/:id", authenticateUser, async (req: any, res: any) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { id } = req.params;
+
+    try {
+        await prisma.birthdayBooking.delete({
+            where: { id: Number(id) }
+        });
+        res.json({ message: "Reserva eliminada correctamente" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+//LISTAR RESERVAS BIRTHDAY
+router.get("/getBirthdayBookings", authenticateUser, async (req: any, res) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    try {
+        const birthdayBookings = await prisma.birthdayBooking.findMany({
+            include: { slot: true }
+        });
+        res.json(birthdayBookings); // devolvemos todas las reservas de cumpleaños
+    } catch (err) {
+        console.error("Error en GET /bookings:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+//CREAR RESERVA DAYCARE
+router.post("/", authenticateUser, validateDTO(CreateBirthdayBookingDTO), async (req: any, res: any) => {
+    try {
+        const { number_of_kids, phone, pack, comments } = req.body;
+        const user_id = req.user.id;  // Obtener user_id del token verificado
+        const addedBookings = await prisma.booking.create({
+            data: {
+                number_of_kinds: number_of_kids,
+                contact_number: phone,
+                type_of_package: pack,
+                comments,
+                userId: user_id,
+            }
+        })
+        res.json(addedBookings);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
 //LISTAR RESERVAS
 router.get("/", authenticateUser, async (req: any, res) => {
     if (req.user.role !== 'ADMIN') {
@@ -47,6 +222,26 @@ router.get("/", authenticateUser, async (req: any, res) => {
     }
 });
 
+//MODIFICAR RESERVA DAYCARE
+router.post("/", authenticateUser, validateDTO(CreateBirthdayBookingDTO), async (req: any, res: any) => {
+    try {
+        const { number_of_kids, phone, pack, comments, status } = req.body;
+        const user_id = req.user.id;  // Obtener user_id del token verificado
+        const addedBookings = await prisma.booking.create({
+            data: {
+                number_of_kinds: number_of_kids,
+                contact_number: phone,
+                type_of_package: pack,
+                comments,
+                userId: user_id,
+            }
+        })
+        res.json(addedBookings);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
 
 
 router.get('/my', authenticateUser, async (req: any, res) => {

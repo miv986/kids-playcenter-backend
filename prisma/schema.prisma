@@ -17,6 +17,20 @@ enum Role {
   ADMIN
 }
 
+enum Status {
+  PENDING
+  CANCELLED
+  CONFIRMED
+  CLOSED
+  OPEN
+}
+
+enum Package {
+  ALEGRIA
+  FIESTA
+  ESPECIAL
+}
+
 // Tabla de usuarios
 model User {
   id             Int       @id @default(autoincrement())
@@ -61,3 +75,42 @@ model Booking {
   userId           Int
   user             User     @relation(fields: [userId], references: [id])
 }
+
+
+// Tabla de reservas de cumpleaños
+model BirthdayBooking {
+  id               Int      @id @default(autoincrement())
+  guestEmail       String
+  guest            String   
+  number_of_kids   Int
+  contact_number   String
+  comments         String?
+  packageType      Package
+  status           Status   @default(PENDING)
+
+  slotId           Int      @unique
+  slot             BirthdaySlot @relation(fields: [slotId], references: [id])
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+}
+
+// Plazas para reservas de cumpleaños
+model BirthdaySlot {
+
+  id          Int       @id @default(autoincrement())
+  date        DateTime  // día del cumpleaños
+  startTime   DateTime  // hora de inicio
+  endTime     DateTime  // hora de fin
+
+
+  status      Status    @default(CLOSED)
+
+  booking     BirthdayBooking? // reserva que ocupa este slot
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+
+
