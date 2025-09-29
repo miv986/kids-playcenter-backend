@@ -5,6 +5,7 @@ import { corsMiddleware } from './middleware/cors';
 import apiRoutes from './routes/api';
 import authRoutes from './routes/auth';
 import apiBookings from './routes/bookings';
+import apiBirthdaySlots from './routes/birthdaySlots';
 import { PrismaClient } from '@prisma/client';
 const client = new PrismaClient();
 
@@ -33,6 +34,7 @@ app.use((req, res, next) => {
 app.use('/api', apiRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/bookings', apiBookings)
+app.use('/api/birthdaySlots', apiBirthdaySlots)
 
 // Ruta raíz
 app.get('/', (req, res) => {
@@ -43,6 +45,7 @@ app.get('/', (req, res) => {
       api: '/api',
       auth: '/api/auth',
       apiBookings: '/api/bookings',
+      apiBirthdaySlots: '/api/birthdaySlots',
     },
   });
 });

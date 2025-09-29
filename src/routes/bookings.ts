@@ -1,10 +1,10 @@
 import express from "express";
 import { authenticateUser } from "../middleware/auth";
-const router = express.Router();
 import { PrismaClient } from "@prisma/client";
 import { validateDTO } from "../middleware/validation";
 import { CreateBirthdayBookingDTO } from "../dtos/CreateBirthdayBookingDTO";
 const prisma = new PrismaClient();
+const router = express.Router();
 
 //
 // BOOKINGS
@@ -12,7 +12,7 @@ const prisma = new PrismaClient();
 
 //CREAR RESERVA CUMPLEAÑOS
 router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), async (req: any, res: any) => {
-    const { guest, number_of_kids, phone, pack, comments, slotId, guestEmail } = req.body;
+    const { guest, guestEmail, number_of_kids, contact_number, packageType, comments, slotId } = req.body;
     const slot = await prisma.birthdaySlot.findUnique({
         where: { id: slotId },
         include: { booking: true } // para verificar si ya tiene reserva
@@ -35,9 +35,9 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
                 guest: guest,
                 guestEmail,
                 number_of_kids: number_of_kids,
-                contact_number: phone,
+                contact_number,
                 comments,
-                packageType: pack,
+                packageType,
                 slot: { connect: { id: slotId } }
 
             }
@@ -50,7 +50,7 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
 });
 
 // GET BirthdayBooking por ID
-router.get("getBirthdayBooking/:id", authenticateUser, async (req: any, res) => {
+router.get("/getBirthdayBooking/:id", authenticateUser, async (req: any, res) => {
     if (req.user.role !== 'ADMIN') {
         return res.status(403).json({ error: 'Forbidden' });
     }
@@ -75,31 +75,31 @@ router.get("getBirthdayBooking/:id", authenticateUser, async (req: any, res) => 
 });
 
 // GET BirthdayBookings por fecha
-router.get("getBirthdayBooking/by-date/:date", authenticateUser, async (req: any, res) => {
+router.get("/getBirthdayBooking/by-date/:date", authenticateUser, async (req: any, res) => {
     if (req.user.role !== 'ADMIN') {
         return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const { date } = req.params;
-    const targetDate = new Date(date);
+    const { date } = req.params; // "YYYY-MM-DD"
+    const [year, month, day] = date.split("-").map(Number);
 
-    // Ajuste para obtener todas las reservas del día completo
-    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999));
+    // Crear rango en UTC
+    const startOfDay = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+    const endOfDay = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+
+    console.log("🔍 Buscando entre (UTC):", startOfDay, "y", endOfDay);
 
     try {
         const bookings = await prisma.birthdayBooking.findMany({
             where: {
                 slot: {
-                    date: {
-                        gte: startOfDay,
-                        lte: endOfDay
-                    }
+                    startTime: { gte: startOfDay, lte: endOfDay } // <-- usar startTime
                 }
             },
             include: { slot: true }
         });
 
+        console.log("📦 Reservas encontradas:", bookings.length);
         res.json(bookings);
     } catch (err) {
         console.error("Error en GET /bookings/by-date/:date:", err);
@@ -107,9 +107,8 @@ router.get("getBirthdayBooking/by-date/:date", authenticateUser, async (req: any
     }
 });
 
-
 // UPDATE BirthdayBooking
-router.put("updateBirthdayBooking/:id", authenticateUser, async (req: any, res: any) => {
+router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res: any) => {
     if (req.user.role !== 'ADMIN') {
         return res.status(403).json({ error: 'Forbidden' });
     }
@@ -150,7 +149,43 @@ router.put("updateBirthdayBooking/:id", authenticateUser, async (req: any, res: 
         res.status(500).json({ error: "Internal server error" });
     }
 });
+// UPDATE BirthdayBooking Status
+router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any, res: any) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
 
+    const { id } = req.params;
+    const { status, slotId } = req.body;
+
+    try {
+        // Validar slot si se quiere cambiar
+        if (slotId) {
+            const slot = await prisma.birthdaySlot.findUnique({
+                where: { id: slotId },
+                include: { booking: true }
+            });
+            if (!slot) return res.status(404).json({ error: "Slot no encontrado" });
+            if (slot.booking && slot.booking.id !== Number(id)) {
+                return res.status(400).json({ error: "Este slot ya está reservado" });
+            }
+            if (slot.status !== "OPEN") return res.status(400).json({ error: "Este slot no está disponible" });
+        }
+
+        const updatedBooking = await prisma.birthdayBooking.update({
+            where: { id: Number(id) },
+            data: {
+                status,
+                ...(slotId && { slot: { connect: { id: slotId } } }) // solo si cambias slot
+            }
+        });
+
+        res.json(updatedBooking);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
 
 // DELETE BirthdayBooking
 router.delete("deleteBirthdayBooking/:id", authenticateUser, async (req: any, res: any) => {
