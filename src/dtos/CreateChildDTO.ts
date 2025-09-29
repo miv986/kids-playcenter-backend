@@ -13,8 +13,13 @@ export class CreateChildDTO {
 
     @IsOptional()
     @IsISO8601({ strict: true }, { message: "dateOfBirth debe ser una fecha válida (YYYY-MM-DD)" })
-    @Transform(({ value }) => value ? new Date(`${value}T00:00:00.000Z`) : undefined)
+    @Transform(({ value }) => {
+      if (!value) return undefined;
+      if (typeof value === "string") return new Date(`${value}T00:00:00.000Z`);
+      return value; // si ya es Date, lo deja pasar
+    })
     dateOfBirth?: Date;
+    
 
     @IsNotEmpty()
     @IsString({ message: "notes debe ser un string" })
