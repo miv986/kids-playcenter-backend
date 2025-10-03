@@ -15,9 +15,17 @@ router.post("/", authenticateUser, async (req: any, res) => {
 
     const { date, startTime, endTime, status } = req.body;
 
-    const dateDay = parse(`${date}`, "dd-MM-yyyy", new Date());
-    const start = parse(`${date} ${startTime}`, "dd-MM-yyyy HH:mm", new Date());
-    const end = parse(`${date} ${endTime}`, "dd-MM-yyyy HH:mm", new Date());
+    console.log("FECHAS QUE LLEGAN AL BACK:", date, " ", startTime, " ", endTime);
+
+    const dateDay = new Date(date);
+    dateDay.setHours(0, 0, 0, 0);
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+
+    console.log("FECHAS QUE ENVIAMOS AL BACK:", dateDay, " ", start, " ", end);
+
+
+    console.log()
 
     if (end <= start) {
         return res.status(400).json({ error: "La hora de fin debe ser posterior a la de inicio" });
@@ -71,7 +79,6 @@ router.post("/", authenticateUser, async (req: any, res) => {
         return res.status(400).json({ error: "El slot se solapa con otro existente" });
     }
 
-
     try {
         const slot = await prisma.birthdaySlot.create({
             data: {
@@ -105,53 +112,34 @@ router.get("/", authenticateUser, async (req: any, res) => {
     }
 });
 
-// ✅ Ver slot por ID
-router.get("/:id", authenticateUser, async (req: any, res) => {
-    if (req.user.role !== "ADMIN") {
-        return res.status(403).json({ error: "Forbidden" });
-    }
 
-    const { id } = req.params;
-
-    try {
-        const slot = await prisma.birthdaySlot.findUnique({
-            where: { id: Number(id) },
-            include: { booking: true }
-        });
-
-        if (!slot) return res.status(404).json({ error: "Slot no encontrado" });
-
-        res.json(slot);
-    } catch (err) {
-        console.error("Error obteniendo slot:", err);
-        res.status(500).json({ error: "Internal server error" });
-    }
-});
 
 // ✅ Consultar slots de un día concreto
-router.get("/getSlotsByDay", authenticateUser, async (req: any, res) => {
+router.get("/getSlotsByDay/:date", authenticateUser, async (req: any, res) => {
     if (req.user.role !== "ADMIN") {
         return res.status(403).json({ error: "Forbidden" });
     }
 
-    const { date } = req.query;
+    const { date } = req.params;
+    console.log("Fecha recibida en backend", date);
+    const [year, month, day] = date.split("-").map(Number);
+
 
     if (!date) {
         return res.status(400).json({ error: "Debes proporcionar un parámetro ?date=dd-MM-yyyy" });
     }
 
+    const startOfDay = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+    const endOfDay = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+
     try {
-        // 1️⃣ Parsear la fecha del query
-        const parsedDate = parse(date as string, "dd-MM-yyyy", new Date());
-        const dayStart = startOfDay(parsedDate);
-        const dayEnd = endOfDay(parsedDate);
 
         // 2️⃣ Buscar slots que caigan dentro de ese día
         const slots = await prisma.birthdaySlot.findMany({
             where: {
-                date: {
-                    gte: dayStart,
-                    lte: dayEnd
+                startTime: {
+                    gte: startOfDay,
+                    lte: endOfDay
                 }
             },
             orderBy: { startTime: "asc" },
@@ -184,15 +172,11 @@ router.put("/:id", authenticateUser, async (req: any, res) => {
     }
 
     // 2️⃣ Parsear nuevos valores (si existen) o mantener los actuales
-    const dateDay = date ? parse(`${date}`, "dd-MM-yyyy", new Date()) : current.date;
+    const dateDay = date ? (() => { const d = new Date(date); d.setUTCHours(0, 0, 0, 0); return d; })() : current.date;
 
-    const start = startTime
-        ? parse(`${date || format(current.date, "dd-MM-yyyy")} ${startTime}`, "dd-MM-yyyy HH:mm", new Date())
-        : current.startTime;
+    const start = startTime ? new Date(startTime) : current.startTime;
+    const end = endTime ? new Date(endTime) : current.endTime;
 
-    const end = endTime
-        ? parse(`${date || format(current.date, "dd-MM-yyyy")} ${endTime}`, "dd-MM-yyyy HH:mm", new Date())
-        : current.endTime;
 
     if (end <= start) {
         return res.status(400).json({ error: "La hora de fin debe ser posterior a la de inicio" });
