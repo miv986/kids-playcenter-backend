@@ -89,7 +89,7 @@ model BirthdayBooking {
   status           Status   @default(PENDING)
 
   slotId           Int      @unique
-  slot             BirthdaySlot @relation(fields: [slotId], references: [id])
+  slot             BirthdaySlot @relation(fields: [slotId], references: [id], onDelete: Cascade)
 
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

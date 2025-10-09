@@ -37,11 +37,17 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
                 number_of_kids: number_of_kids,
                 contact_number,
                 comments,
-                packageType,
+                packageType: packageType,
                 slot: { connect: { id: slotId } }
 
-            }
-        })
+            },
+        });
+
+        // 3️⃣ Actualizar el slot a CLOSED
+        await prisma.birthdaySlot.update({
+            where: { id: slotId },
+            data: { status: "CLOSED" },
+        });
         res.json(addedBookings);
     } catch (err) {
         console.error(err);
