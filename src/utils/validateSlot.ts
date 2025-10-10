@@ -34,8 +34,8 @@ export async function validateSlotConflict({ id, date, start, end }: { id?: numb
     where: {
       ...(id && { id: { not: id } }),
       date,
-      startTime: { lt: end },
-      endTime: { gt: start },
+      startTime: { lte: end },
+      endTime: { gte: start },
     },
   });
   if (overlapping) {

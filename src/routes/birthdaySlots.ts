@@ -22,11 +22,13 @@ router.post("/", authenticateUser, async (req: any, res) => {
     const start = new Date(startTime);
     const end = new Date(endTime);
 
-    await validateSlotConflict({ date: dateDay, start, end });
 
     console.log("FECHAS QUE ENVIAMOS AL BACK:", dateDay, " ", start, " ", end);
 
     try {
+        await validateSlotConflict({ date: dateDay, start, end });
+
+
         const slot = await prisma.birthdaySlot.create({
             data: {
                 date: dateDay,
@@ -60,14 +62,18 @@ router.get("/", async (req: any, res) => {
     }
 });
 
-// ✅ Listar todos los slots
+// ✅ Listar todos los slots disponibles
 router.get("/availableSlots", async (req: any, res) => {
 
     try {
         const slots = await prisma.birthdaySlot.findMany({
             where: {
-                status: "OPEN"
+                OR: [
+                    { status: 'OPEN' },
+                    { status: 'CLOSED' }
+                ]
             },
+
         });
         res.json(slots);
     } catch (err) {
@@ -138,10 +144,11 @@ router.put("/:id", authenticateUser, async (req: any, res) => {
     const start = startTime ? new Date(startTime) : current.startTime;
     const end = endTime ? new Date(endTime) : current.endTime;
 
-    await validateSlotConflict({ id: Number(id), date: dateDay, start, end });
 
     // 5️⃣ Actualizar
     try {
+        await validateSlotConflict({ id: Number(id), date: dateDay, start, end });
+
         const updated = await prisma.birthdaySlot.update({
             where: { id: Number(id) },
             data: {
