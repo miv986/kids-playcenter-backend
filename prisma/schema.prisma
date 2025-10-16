@@ -63,19 +63,29 @@ model User {
   tutor              User?     @relation("TutorChildren", fields: [tutorId], references: [id])
 
 }
-// Tabla de reservas
-model Booking {
+
+//Tabla de reservas de ludoteca
+model DaycareBooking {
   id               Int      @id @default(autoincrement())
-  number_of_kinds  Int
-  contact_number   String
-  type_of_package  String
   comments         String?
+
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
   userId           Int
   user             User     @relation(fields: [userId], references: [id])
 }
 
+//Tabla de plazas para reservas de ludoteca diaria
+
+model DaycareSlot {
+  id              Int       @id @default(autoincrement())
+  slotsDay        Int       Int 
+
+}
+
+  
 
 // Tabla de reservas de cumpleaños
 model BirthdayBooking {
