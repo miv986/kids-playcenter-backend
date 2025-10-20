@@ -55,7 +55,7 @@ model User {
   updatedAt      DateTime  @updatedAt
 
   //Relación con bookings
-  bookings       Booking[] // Relación 1 a muchos con Bookings
+  bookings       DaycareBooking[] // Relación 1 a muchos con Bookings
 
   //Relación tutor-hijo
   children           User[]    @relation("TutorChildren")        // los hijos que tiene este tutor
@@ -68,6 +68,10 @@ model User {
 model DaycareBooking {
   id               Int      @id @default(autoincrement())
   comments         String?
+  status           Status   @default(PENDING)
+
+  startTime        DateTime
+  endTime          DateTime
 
 
   createdAt        DateTime @default(now())
@@ -75,13 +79,30 @@ model DaycareBooking {
 
   userId           Int
   user             User     @relation(fields: [userId], references: [id])
+
+  // Relación con los slots afectados
+
+  slots             DaycareSlot[] @relation("DaycareSlotBookings")
+
 }
 
 //Tabla de plazas para reservas de ludoteca diaria
 
 model DaycareSlot {
   id              Int       @id @default(autoincrement())
-  slotsDay        Int       Int 
+  date            DateTime   // Día del slot
+  hour            Int   // Hora de inicio del slot ej. 17
+  
+
+  capacity        Int        // Número total de plazas (por ejemplo 20)
+  availableSpots  Int        // Plazas restantes
+  status          Status     @default(OPEN)
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relación con reservas de ludoteca
+  bookings        DaycareBooking[] @relation("DaycareSlotBookings")
 
 }
 
