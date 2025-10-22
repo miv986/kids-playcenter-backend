@@ -92,7 +92,8 @@ model DaycareSlot {
   id              Int       @id @default(autoincrement())
   date            DateTime   // Día del slot
   hour            Int        // Hora de inicio del slot ej. 17
-
+  openHour        DateTime   // hora de inicio
+  closeHour       DateTime   // hora de fin
   capacity        Int        // Número total de plazas (por ejemplo 20)
   availableSpots  Int        // Plazas restantes
   status          Status     @default(OPEN)

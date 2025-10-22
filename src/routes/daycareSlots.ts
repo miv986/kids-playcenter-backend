@@ -16,10 +16,15 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
   }
 
   try {
-
     const DAYS_TO_GENERATE = 14;
-
     const { openHour, closeHour, capacity } = req.body;
+
+    if (!openHour || !closeHour) {
+      return res.status(400).json({ error: "Faltan los campos openHour o closeHour." });
+    }
+
+    const [openH, openM] = openHour.split(":").map(Number);
+    const [closeH, closeM] = closeHour.split(":").map(Number);
 
     const today = new Date();
     const createdSlots = [];
@@ -28,30 +33,36 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
       const date = new Date(today);
       date.setDate(today.getDate() + dayOffset);
 
-      // Obtener el día de la semana (0=Domingo, 1=Lunes, ..., 6=Sábado)
+      // 1 = lunes ... 4 = jueves
       const weekday = date.getDay();
-
-      // Solo crear slots de Lunes (1) a Jueves (4)
       if (weekday >= 1 && weekday <= 4) {
-        for (let hour = openHour; hour < closeHour; hour++) {
-
+        for (let hour = openH; hour < closeH; hour++) {
           const existingSlot = await prisma.daycareSlot.findFirst({
             where: {
-              date: new Date(date.toDateString()), // compara por fecha sin hora
-              hour
+              date: new Date(date.toDateString()),
+              hour,
             },
           });
 
           if (!existingSlot) {
+            const openDate = new Date(date);
+            openDate.setHours(hour, 0, 0, 0);
+
+            const closeDate = new Date(date);
+            closeDate.setHours(hour + 1, 0, 0, 0);
+
             const newSlot = await prisma.daycareSlot.create({
               data: {
                 date: new Date(date.toDateString()),
                 hour,
-                capacity: capacity,
+                openHour: openDate,
+                closeHour: closeDate,
+                capacity,
                 availableSpots: capacity,
-                status: 'OPEN',
+                status: "OPEN",
               },
             });
+
             createdSlots.push(newSlot);
           }
         }
@@ -62,12 +73,12 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
       message: `✅ ${createdSlots.length} slots creados correctamente (lunes a jueves, próximas 2 semanas).`,
       created: createdSlots,
     });
-  } catch (err: any) {
-    console.error('Error generando slots:', err);
-    return res.status(500).json({ error: 'Error generando los slots de ludoteca.' });
+  } catch (err) {
+    console.error("Error generando slots:", err);
+    return res.status(500).json({ error: "Error generando los slots de ludoteca." });
   }
-
 });
+
 
 
 /**
@@ -81,7 +92,7 @@ router.put("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
 
   try {
     const slotId = Number(req.params.id);
-    const { capacity, availableSpots, status } = req.body;
+    const { capacity, availableSpots, status, openHour, closeHour } = req.body;
 
     const existingSlot = await prisma.daycareSlot.findUnique({
       where: { id: slotId },
@@ -91,14 +102,29 @@ router.put("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
       return res.status(404).json({ error: "Slot no encontrado." });
     }
 
-    // 👇 Actualizar campos
+    const dataToUpdate: any = {
+      capacity: capacity ?? existingSlot.capacity,
+      availableSpots: availableSpots ?? existingSlot.availableSpots,
+      status: status ?? existingSlot.status,
+    };
+
+    // 🕒 Si vienen openHour/closeHour como "HH:mm", conviértelos
+    if (openHour) {
+      const [h, m] = openHour.split(":").map(Number);
+      const d = new Date(existingSlot.date);
+      d.setHours(h, m, 0, 0);
+      dataToUpdate.openHour = d;
+    }
+    if (closeHour) {
+      const [h, m] = closeHour.split(":").map(Number);
+      const d = new Date(existingSlot.date);
+      d.setHours(h, m, 0, 0);
+      dataToUpdate.closeHour = d;
+    }
+
     const updatedSlot = await prisma.daycareSlot.update({
       where: { id: slotId },
-      data: {
-        capacity: capacity ?? existingSlot.capacity,
-        availableSpots: availableSpots ?? existingSlot.availableSpots,
-        status: status ?? existingSlot.status,
-      },
+      data: dataToUpdate,
     });
 
     return res.json({
@@ -183,30 +209,37 @@ router.get("/available/date/:date", async (req, res) => {
         status: "OPEN",
         availableSpots: { gt: 0 },
       },
-      orderBy: { hour: "asc" },
+      orderBy: { openHour: "asc" },
       select: {
         id: true,
         hour: true,
+        openHour: true,
+        closeHour: true,
         availableSpots: true,
         capacity: true,
         status: true,
       },
     });
 
+    const formatted = availableSlots.map((slot) => ({
+      id: slot.id,
+      date: date, // agregar la fecha
+      hour: slot.hour,
+      openHour: slot.openHour,
+      closeHour: slot.closeHour,
+      availableSpots: slot.availableSpots,
+      capacity: slot.capacity,
+      status: slot.status,
+      label: `${new Date(slot.openHour).getHours()}:00 - ${new Date(slot.closeHour).getHours()}:00`,
+    }));
+
+
     // Si no hay resultados
     if (availableSlots.length === 0) {
       return res.json({ date, availableSlots: [] });
     }
 
-    // Devolver formato amigable para el frontend
-    res.json({
-      date,
-      availableSlots: availableSlots.map((slot) => ({
-        id: slot.id,
-        label: `${slot.hour}:00 - ${slot.hour + 1}:00`,
-        availableSpots: slot.availableSpots,
-      })),
-    });
+    return res.json({ date, availableSlots: formatted });
   } catch (err) {
     console.error("Error al obtener slots disponibles:", err);
     res.status(500).json({ error: "Internal server error" });
@@ -218,14 +251,14 @@ router.get("/available/date/:date", async (req, res) => {
 router.get("/", async (req: any, res) => {
 
   try {
-      const slots = await prisma.daycareSlot.findMany({
-          include: {bookings: true},
+    const slots = await prisma.daycareSlot.findMany({
+      include: { bookings: true },
 
-      });
-      res.json(slots);
+    });
+    res.json(slots);
   } catch (err) {
-      console.error("Error listando slots disponibles:", err);
-      res.status(500).json({ error: "Internal server error" });
+    console.error("Error listando slots disponibles:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
