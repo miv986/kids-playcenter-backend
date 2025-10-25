@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "ts-node src/server.ts",
+    "dev": "nodemon --exec ts-node src/server.ts",
+    "dev:watch": "nodemon --watch src --ext ts,js --exec ts-node src/server.ts",
     "postbuild": "npm run generate",
     "generate": "prisma generate",
     "postinstall": "npm run generate",
@@ -33,6 +34,8 @@
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.3.1",
+    "nodemon": "^3.0.2",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
   }
 }
