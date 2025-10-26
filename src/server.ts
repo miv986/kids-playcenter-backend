@@ -7,7 +7,7 @@ import authRoutes from './routes/auth';
 import apiBookings from './routes/bookings';
 import apiBirthdaySlots from './routes/birthdaySlots';
 import apiDaycareSlots from './routes/daycareSlots';
-
+import apiDaycareBookings from './routes/daycareBookings';
 import { PrismaClient } from '@prisma/client';
 
 const client = new PrismaClient();
@@ -39,6 +39,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/bookings', apiBookings)
 app.use('/api/birthdaySlots', apiBirthdaySlots)
 app.use('/api/daycareSlots', apiDaycareSlots)
+app.use('/api/daycareBookings', apiDaycareBookings)
 
 // Ruta raíz
 app.get('/', (req, res) => {
@@ -51,6 +52,8 @@ app.get('/', (req, res) => {
       apiBookings: '/api/bookings',
       apiBirthdaySlots: '/api/birthdaySlots',
       apiDaycareSlots: '/api/daycareSlots',
+      apiDaycareBookings: '/api/daycareBookings',
+
     },
   });
 });

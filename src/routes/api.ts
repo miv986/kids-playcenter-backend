@@ -12,7 +12,7 @@ const router = express.Router();
 router.post('/addChild', authenticateUser, validateDTO(CreateChildDTO), async (req: any, res) => {
   try {
 
-    const { name, surname, dateOfBirth, notes, medicalNotes, allergies, emergency_contact_name_1, emergency_phone_1 } = req.body;
+    const { name, surname, dateOfBirth, notes, medicalNotes, allergies, emergency_contact_name_1, emergency_phone_1, emergency_contact_name_2, emergency_phone_2 } = req.body;
     console.log(req, "REQ");
     const user_id = req.user.id;
     if (!user_id) {
@@ -28,6 +28,8 @@ router.post('/addChild', authenticateUser, validateDTO(CreateChildDTO), async (r
         allergies: allergies,
         emergency_contact_name_1: emergency_contact_name_1,
         emergency_phone_1: emergency_phone_1,
+        emergency_contact_name_2: emergency_contact_name_2,
+        emergency_phone_2: emergency_phone_2,
         role: Role.CHILD,
         isEmailVerified: true,
         tutorId: user_id,
