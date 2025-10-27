@@ -1,12 +1,17 @@
 import express from 'express';
 import bodyParser from 'body-parser';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import { corsMiddleware } from './middleware/cors';
 import apiRoutes from './routes/api';
 import authRoutes from './routes/auth';
 import apiBookings from './routes/bookings';
 import apiBirthdaySlots from './routes/birthdaySlots';
+import apiDaycareSlots from './routes/daycareSlots';
+import apiDaycareBookings from './routes/daycareBookings';
+import apiPackages from './routes/packages';
 import { PrismaClient } from '@prisma/client';
+
 const client = new PrismaClient();
 
 
@@ -21,6 +26,7 @@ const PORT = process.env.PORT || 4000;
 
 // Middleware
 app.use(corsMiddleware);
+app.use(cookieParser());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -35,6 +41,9 @@ app.use('/api', apiRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/bookings', apiBookings)
 app.use('/api/birthdaySlots', apiBirthdaySlots)
+app.use('/api/daycareSlots', apiDaycareSlots)
+app.use('/api/daycareBookings', apiDaycareBookings)
+app.use('/api/packages', apiPackages)
 
 // Ruta raíz
 app.get('/', (req, res) => {
@@ -46,6 +55,10 @@ app.get('/', (req, res) => {
       auth: '/api/auth',
       apiBookings: '/api/bookings',
       apiBirthdaySlots: '/api/birthdaySlots',
+      apiDaycareSlots: '/api/daycareSlots',
+      apiDaycareBookings: '/api/daycareBookings',
+      apiPackages: '/api/packages',
+
     },
   });
 });

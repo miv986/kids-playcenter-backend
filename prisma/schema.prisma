@@ -10,6 +10,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+
 // Enum para el rol del usuario
 enum Role {
   USER
@@ -55,27 +65,70 @@ model User {
   updatedAt      DateTime  @updatedAt
 
   //Relación con bookings
-  bookings       Booking[] // Relación 1 a muchos con Bookings
+  bookings       DaycareBooking[] // Relación 1 a muchos con Bookings
 
   //Relación tutor-hijo
   children           User[]    @relation("TutorChildren")        // los hijos que tiene este tutor
   tutorId            Int?                                          
   tutor              User?     @relation("TutorChildren", fields: [tutorId], references: [id])
 
-}
-// Tabla de reservas
-model Booking {
-  id               Int      @id @default(autoincrement())
-  number_of_kinds  Int
-  contact_number   String
-  type_of_package  String
-  comments         String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  userId           Int
-  user             User     @relation(fields: [userId], references: [id])
+  //Relación con reservas de ludoteca (para hijos)
+  daycareBookings    DaycareBooking[] @relation("DaycareBookingChildren")
+
+ //Relación con refreshToken 
+  refreshTokens  RefreshToken[]
+
+  // Relación con notas del admin
+  childNotesReceived ChildNote[] @relation("ChildNotes") // Notas que recibió un niño
+  adminNotesCreated  ChildNote[] @relation("AdminNotes") // Notas creadas por un admin
+
 }
 
+//Tabla de reservas de ludoteca
+model DaycareBooking {
+  id               Int      @id @default(autoincrement())
+  comments         String?
+  status           Status   @default(PENDING)
+
+  startTime        DateTime
+  endTime          DateTime
+
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id])
+
+  // Relación con los slots afectados
+  slots             DaycareSlot[] @relation("DaycareSlotBookings")
+
+  // Relación con los hijos de la reserva
+  children         User[]    @relation("DaycareBookingChildren")
+
+}
+
+//Tabla de plazas para reservas de ludoteca diaria
+
+model DaycareSlot {
+  id              Int       @id @default(autoincrement())
+  date            DateTime   // Día del slot
+  hour            Int        // Hora de inicio del slot ej. 17
+  openHour        DateTime   // hora de inicio
+  closeHour       DateTime   // hora de fin
+  capacity        Int        // Número total de plazas (por ejemplo 20)
+  availableSpots  Int        // Plazas restantes
+  status          Status     @default(OPEN)
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relación con reservas de ludoteca
+  bookings        DaycareBooking[] @relation("DaycareSlotBookings")
+
+}
+
+  
 
 // Tabla de reservas de cumpleaños
 model BirthdayBooking {
@@ -112,5 +165,38 @@ model BirthdaySlot {
   updatedAt   DateTime @updatedAt
 }
 
+// Configuración de packs de cumpleaños (editables por admin)
+model BirthdayPackage {
+  id            Int      @id @default(autoincrement())
+  name          String   // "Pack Alegría", "Pack Fiesta", etc.
+  type          Package  @unique // ALEGRIA, FIESTA, ESPECIAL
+  duration      String   // "3 horas"
+  price         String   // "15€"
+  priceValue    Int      // 15 (para ordenar)
+  features      String[] // Array de características
+  isPopular     Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Notas del admin para padres sobre sus hijos
+model ChildNote {
+  id            Int      @id @default(autoincrement())
+  childId       Int
+  child         User     @relation("ChildNotes", fields: [childId], references: [id], onDelete: Cascade)
+  
+  adminId       Int      // ID del admin que creó la nota
+  admin         User     @relation("AdminNotes", fields: [adminId], references: [id])
+  
+  content       String   // Contenido de la nota
+  images        String[] // Array de URLs de imágenes
+  noteDate      DateTime @default(now()) // Fecha de la nota
+  isRead        Boolean  @default(false) // Si el padre ha leído la nota
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
 
 

@@ -11,21 +11,17 @@ export class CreateChildDTO {
     @IsNotEmpty({ message: "surname es obligatorio" })
     surname!: string;
 
-    @IsOptional()
-    @IsISO8601({ strict: true }, { message: "dateOfBirth debe ser una fecha válida (YYYY-MM-DD)" })
-    @Transform(({ value }) => {
-      if (!value) return undefined;
-      if (typeof value === "string") return new Date(`${value}T00:00:00.000Z`);
-      return value; // si ya es Date, lo deja pasar
-    })
-    dateOfBirth?: Date;
+    @IsString({ message: "dateOfBirth debe ser un string" })
+    @IsNotEmpty({ message: "dateOfBirth es obligatorio" })
+    @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: "dateOfBirth debe ser una fecha válida (YYYY-MM-DD)" })
+    dateOfBirth!: string;
     
 
-    @IsNotEmpty()
+    @IsOptional()
     @IsString({ message: "notes debe ser un string" })
-    notes!: string;
+    notes?: string;
 
-    @IsNotEmpty()
+    @IsOptional()
     @IsString({ message: "medicalNotes debe ser un string" })
     medicalNotes?: string;
 

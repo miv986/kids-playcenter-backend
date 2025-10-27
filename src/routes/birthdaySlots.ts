@@ -50,7 +50,6 @@ router.post("/", authenticateUser, async (req: any, res) => {
 // ✅ Listar todos los slots
 router.get("/", async (req: any, res) => {
 
-
     try {
         const slots = await prisma.birthdaySlot.findMany({
             include: { booking: true } // para ver si ya tienen reserva
