@@ -10,6 +10,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+
 // Enum para el rol del usuario
 enum Role {
   USER
@@ -64,6 +74,13 @@ model User {
 
   //Relación con reservas de ludoteca (para hijos)
   daycareBookings    DaycareBooking[] @relation("DaycareBookingChildren")
+
+ //Relación con refreshToken 
+  refreshTokens  RefreshToken[]
+
+  // Relación con notas del admin
+  childNotesReceived ChildNote[] @relation("ChildNotes") // Notas que recibió un niño
+  adminNotesCreated  ChildNote[] @relation("AdminNotes") // Notas creadas por un admin
 
 }
 
@@ -148,5 +165,38 @@ model BirthdaySlot {
   updatedAt   DateTime @updatedAt
 }
 
+// Configuración de packs de cumpleaños (editables por admin)
+model BirthdayPackage {
+  id            Int      @id @default(autoincrement())
+  name          String   // "Pack Alegría", "Pack Fiesta", etc.
+  type          Package  @unique // ALEGRIA, FIESTA, ESPECIAL
+  duration      String   // "3 horas"
+  price         String   // "15€"
+  priceValue    Int      // 15 (para ordenar)
+  features      String[] // Array de características
+  isPopular     Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Notas del admin para padres sobre sus hijos
+model ChildNote {
+  id            Int      @id @default(autoincrement())
+  childId       Int
+  child         User     @relation("ChildNotes", fields: [childId], references: [id], onDelete: Cascade)
+  
+  adminId       Int      // ID del admin que creó la nota
+  admin         User     @relation("AdminNotes", fields: [adminId], references: [id])
+  
+  content       String   // Contenido de la nota
+  images        String[] // Array de URLs de imágenes
+  noteDate      DateTime @default(now()) // Fecha de la nota
+  isRead        Boolean  @default(false) // Si el padre ha leído la nota
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
 
 

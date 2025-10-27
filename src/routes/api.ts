@@ -3,6 +3,7 @@ import express from "express";
 import { authenticateUser } from "../middleware/auth";
 import { CreateChildDTO } from "../dtos/CreateChildDTO";
 import { validateDTO } from "../middleware/validation";
+import { CreateChildNoteDTO } from "../dtos/CreateChildNoteDTO";
 const prisma = new PrismaClient();
 
 const router = express.Router();
@@ -161,7 +162,91 @@ router.delete("/deleteChild/:childId", authenticateUser, async (req: any, res) =
 });
 
 
-// GET /api/admin/tutor/:tutorId
+// GET /api/admin/tutors - Listar tutores con búsqueda y paginación (ADMIN)
+router.get("/admin/tutors", authenticateUser, async (req: any, res) => {
+  // Verificar que sea ADMIN
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+
+  try {
+    const { search, page = "1", limit = "10" } = req.query;
+    const searchQuery = search ? search.toLowerCase().trim() : "";
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Construir condiciones de búsqueda
+    let whereClause: any = { 
+      role: "USER",
+      children: {
+        some: {}
+      }
+    };
+
+    if (searchQuery) {
+      whereClause.OR = [
+        { name: { contains: searchQuery, mode: "insensitive" } },
+        { surname: { contains: searchQuery, mode: "insensitive" } },
+        { email: { contains: searchQuery, mode: "insensitive" } },
+        {
+          children: {
+            some: {
+              OR: [
+                { name: { contains: searchQuery, mode: "insensitive" } },
+                { surname: { contains: searchQuery, mode: "insensitive" } }
+              ]
+            }
+          }
+        }
+      ];
+    }
+
+    const [tutors, total] = await Promise.all([
+      prisma.user.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          name: true,
+          surname: true,
+          email: true,
+          phone_number: true,
+          children: {
+            select: {
+              id: true,
+              name: true,
+              surname: true,
+              dateOfBirth: true,
+              notes: true,
+              medicalNotes: true,
+              allergies: true,
+              emergency_contact_name_1: true,
+              emergency_phone_1: true,
+              emergency_contact_name_2: true,
+              emergency_phone_2: true,
+            },
+            orderBy: { name: "asc" }
+          },
+        },
+        orderBy: { name: "asc" },
+        skip,
+        take: limitNum
+      }),
+      prisma.user.count({ where: whereClause })
+    ]);
+
+    res.status(200).json({
+      tutors,
+      total,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum)
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
 router.get("/admin/tutor/:tutorId", authenticateUser, async (req: any, res) => {
   // Verificar que sea ADMIN
   if (req.user.role !== "ADMIN") {
@@ -208,5 +293,214 @@ router.get("/admin/tutor/:tutorId", authenticateUser, async (req: any, res) => {
   }
 });
 
+// PUT /api/admin/tutor/child/:childId - Actualizar notas de un hijo (ADMIN)
+router.put("/admin/tutor/child/:childId", authenticateUser, async (req: any, res) => {
+  // Verificar que sea ADMIN
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+
+  const childId = parseInt(req.params.childId);
+
+  try {
+    const child = await prisma.user.findUnique({
+      where: { id: childId, role: "CHILD" }
+    });
+
+    if (!child) {
+      return res.status(404).json({ error: "Hijo no encontrado" });
+    }
+
+    const { notes, medicalNotes, allergies } = req.body;
+
+    const updatedChild = await prisma.user.update({
+      where: { id: childId },
+      data: {
+        notes: notes !== undefined ? notes : child.notes,
+        medicalNotes: medicalNotes !== undefined ? medicalNotes : child.medicalNotes,
+        allergies: allergies !== undefined ? allergies : child.allergies,
+      }
+    });
+
+    res.status(200).json(updatedChild);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+//
+// CHILD NOTES - ADMIN PUEDE DEJAR NOTAS A PADRES SOBRE SUS HIJOS
+//
+
+// POST /api/childNote - Crear una nota del admin para un niño (SOLO ADMIN)
+router.post("/childNote", authenticateUser, validateDTO(CreateChildNoteDTO), async (req: any, res) => {
+  // Verificar que sea ADMIN
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+
+  try {
+    const { childId, content, images } = req.body;
+    const adminId = req.user.id;
+
+    // Verificar que el niño existe
+    const child = await prisma.user.findUnique({
+      where: { id: childId, role: "CHILD" }
+    });
+
+    if (!child) {
+      return res.status(404).json({ error: "Niño no encontrado" });
+    }
+
+    const note = await prisma.childNote.create({
+      data: {
+        childId,
+        adminId,
+        content,
+        images: images || [],
+        noteDate: new Date()
+      },
+      include: {
+        child: {
+          select: {
+            id: true,
+            name: true,
+            surname: true
+          }
+        },
+        admin: {
+          select: {
+            id: true,
+            name: true,
+            surname: true
+          }
+        }
+      }
+    });
+
+    res.status(201).json(note);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+// GET /api/childNote/child/:childId - Obtener notas de un niño específico
+router.get("/childNote/child/:childId", authenticateUser, async (req: any, res) => {
+  const childId = parseInt(req.params.childId);
+
+  try {
+    const child = await prisma.user.findUnique({
+      where: { id: childId, role: "CHILD" }
+    });
+
+    if (!child) {
+      return res.status(404).json({ error: "Niño no encontrado" });
+    }
+
+    // Si es el tutor del niño, puede ver las notas
+    if (req.user.role === "ADMIN" || child.tutorId === req.user.id) {
+      const notes = await prisma.childNote.findMany({
+        where: { childId },
+        include: {
+          child: {
+            select: {
+              id: true,
+              name: true,
+              surname: true
+            }
+          },
+          admin: {
+            select: {
+              id: true,
+              name: true,
+              surname: true
+            }
+          }
+        },
+        orderBy: {
+          noteDate: "desc"
+        }
+      });
+
+      return res.status(200).json(notes);
+    }
+
+    return res.status(403).json({ error: "No autorizado" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+// PUT /api/childNote/:noteId/read - Marcar nota como leída
+router.put("/childNote/:noteId/read", authenticateUser, async (req: any, res) => {
+  const noteId = parseInt(req.params.noteId);
+
+  try {
+    const note = await prisma.childNote.findUnique({
+      where: { id: noteId },
+      include: {
+        child: true
+      }
+    });
+
+    if (!note) {
+      return res.status(404).json({ error: "Nota no encontrada" });
+    }
+
+    // Solo el tutor puede marcar como leída
+    if (note.child.tutorId !== req.user.id) {
+      return res.status(403).json({ error: "No autorizado" });
+    }
+
+    const updatedNote = await prisma.childNote.update({
+      where: { id: noteId },
+      data: { isRead: true },
+      include: {
+        child: {
+          select: {
+            id: true,
+            name: true,
+            surname: true
+          }
+        },
+        admin: {
+          select: {
+            id: true,
+            name: true,
+            surname: true
+          }
+        }
+      }
+    });
+
+    res.status(200).json(updatedNote);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+// DELETE /api/childNote/:noteId - Eliminar una nota (SOLO ADMIN)
+router.delete("/childNote/:noteId", authenticateUser, async (req: any, res) => {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+
+  const noteId = parseInt(req.params.noteId);
+
+  try {
+    await prisma.childNote.delete({
+      where: { id: noteId }
+    });
+
+    res.status(200).json({ message: "Nota eliminada correctamente" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
 
 export default router;
