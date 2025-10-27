@@ -13,8 +13,8 @@ import { authenticateUser } from "../middleware/auth";
 
 // Función para generar JWT
 const generateToken = (userId: number, role: string) => {
-  const accessToken = jwt.sign({ userId, role }, process.env.JWT_SECRET!, { expiresIn: "1minute" });
-  const refreshToken = jwt.sign({ userId, role }, process.env.JWT_REFRESH_SECRET!, { expiresIn: "1minute" });
+  const accessToken = jwt.sign({ userId, role }, process.env.JWT_SECRET!, { expiresIn: "15minutes" });
+  const refreshToken = jwt.sign({ userId, role }, process.env.JWT_REFRESH_SECRET!, { expiresIn: "7days" });
   return { accessToken, refreshToken };
 };
 
@@ -185,7 +185,7 @@ router.post("/refresh", async (req, res) => {
     const accessToken = jwt.sign(
       { userId: user.id, role: user.role },
       process.env.JWT_SECRET!,
-      { expiresIn: "15min" }
+      { expiresIn: "15minutes" }
     );
 
     res.json({ accessToken });
