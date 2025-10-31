@@ -18,8 +18,19 @@ const generateToken = (userId: number, role: string) => {
   return { accessToken, refreshToken };
 };
 
+// Función para filtrar campos sensibles del usuario - Solo enviar lo esencial
+const sanitizeUser = (user: any) => {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  };
+};
+
 router.get("/me", authenticateUser, async (req: any, res) => {
-  res.json(req.user);
+  const safeUser = sanitizeUser(req.user);
+  res.json(safeUser);
 });
 
 // POST /api/auth/login
@@ -34,6 +45,12 @@ router.post("/login", async (req, res) => {
     if (user.role !== "ADMIN" && user.role !== "USER") {
       return res.status(403).json({ error: "Este tipo de usuario no puede iniciar sesión" });
     }
+    
+    // Validar que el email esté verificado
+    if (!user.isEmailVerified) {
+      return res.status(403).json({ error: "Debes verificar tu correo electrónico antes de iniciar sesión" });
+    }
+    
     // Validar que tenga password
     if (!user.password) {
       return res.status(403).json({ error: "Usuario no tiene contraseña configurada" });
@@ -61,7 +78,8 @@ router.post("/login", async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    res.json({ user, accessToken });
+    const safeUser = sanitizeUser(user);
+    res.json({ user: safeUser, accessToken });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
@@ -157,7 +175,8 @@ router.post("/register", validateDTO(RegisterDTO), async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    res.status(201).json({ user, accessToken });
+    const safeUser = sanitizeUser(user);
+    res.status(201).json({ user: safeUser, accessToken });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal server errork" });

@@ -11,8 +11,7 @@
     "postbuild": "npm run generate",
     "generate": "prisma generate",
     "postinstall": "npm run generate",
-    "migrate:dev": "prisma migrate dev",
-    "seed": "ts-node prisma/seed.ts"
+    "migrate:dev": "prisma migrate dev"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
