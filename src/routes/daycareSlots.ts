@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import express from "express";
-import { authenticateUser } from "../middleware/auth";
+import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
+import { secureLogger } from "../utils/logger";
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -23,8 +24,29 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
       return res.status(400).json({ error: "Faltan los campos startDate, openHour o closeHour." });
     }
 
+    // ✅ Validar formato de horas
+    if (!/^\d{2}:\d{2}$/.test(openHour) || !/^\d{2}:\d{2}$/.test(closeHour)) {
+      return res.status(400).json({ error: "Formato de hora inválido. Use HH:mm." });
+    }
+
     const [openH, openM] = openHour.split(":").map(Number);
     const [closeH, closeM] = closeHour.split(":").map(Number);
+
+    // ✅ Validar que las horas sean válidas
+    if (isNaN(openH) || isNaN(openM) || openH < 0 || openH > 23 || openM < 0 || openM > 59) {
+      return res.status(400).json({ error: "Hora de apertura inválida." });
+    }
+    if (isNaN(closeH) || isNaN(closeM) || closeH < 0 || closeH > 23 || closeM < 0 || closeM > 59) {
+      return res.status(400).json({ error: "Hora de cierre inválida." });
+    }
+    if (openH >= closeH) {
+      return res.status(400).json({ error: "La hora de apertura debe ser anterior a la hora de cierre." });
+    }
+
+    // ✅ Validar capacidad
+    if (!capacity || isNaN(Number(capacity)) || capacity <= 0) {
+      return res.status(400).json({ error: "La capacidad debe ser un número positivo." });
+    }
 
     // Convertir la fecha de inicio
     const baseDate = new Date(startDate);
@@ -41,10 +63,7 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
 
       // 1 = lunes ... 4 = jueves
       const weekday = date.getDay();
-      console.log(`Día ${dayOffset}: ${date.toDateString()}, weekday: ${weekday}`);
-      
       if (weekday >= 1 && weekday <= 4) {
-        console.log(`✅ Generando slots para ${date.toDateString()} (${weekday === 1 ? 'Lunes' : weekday === 2 ? 'Martes' : weekday === 3 ? 'Miércoles' : 'Jueves'})`);
         for (let hour = openH; hour < closeH; hour++) {
           try {
             // Verificar si ya existe un slot para esta fecha y hora
@@ -83,7 +102,7 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
 
             createdSlots.push(newSlot);
           } catch (error) {
-            console.error(`Error creando slot para ${date.toDateString()} ${hour}:00:`, error);
+            secureLogger.error("Error creando slot", { date: date.toDateString(), hour });
             errors.push(`Error creando slot para ${date.toDateString()} ${hour}:00`);
           }
         }
@@ -102,7 +121,7 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
       }
     });
   } catch (err) {
-    console.error("Error generando slots:", err);
+    secureLogger.error("Error generando slots", { adminId: req.user.id });
     return res.status(500).json({ error: "Error generando los slots de ludoteca." });
   }
 });
@@ -120,9 +139,13 @@ router.put("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
 
   try {
     const slotId = Number(req.params.id);
+
+    // ✅ Validar que el ID sea válido
+    if (isNaN(slotId) || slotId <= 0) {
+      return res.status(400).json({ error: "ID de slot inválido." });
+    }
+
     const { capacity, availableSpots, status, openHour, closeHour } = req.body;
-    
-    console.log("🔄 Actualizando slot:", slotId, { capacity, availableSpots, status, openHour, closeHour });
 
     const existingSlot = await prisma.daycareSlot.findUnique({
       where: { id: slotId },
@@ -140,26 +163,49 @@ router.put("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
 
     // 🕒 Si vienen openHour/closeHour como "HH:mm", conviértelos
     if (openHour) {
+      if (!/^\d{2}:\d{2}$/.test(openHour)) {
+        return res.status(400).json({ error: "Formato de hora inválido. Use HH:mm." });
+      }
       const [h, m] = openHour.split(":").map(Number);
+      if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+        return res.status(400).json({ error: "Hora inválida." });
+      }
       const d = new Date(existingSlot.date);
       d.setHours(h, m, 0, 0);
       dataToUpdate.openHour = d;
       dataToUpdate.hour = h; // Actualizar el campo hour con la hora de inicio
     }
     if (closeHour) {
+      if (!/^\d{2}:\d{2}$/.test(closeHour)) {
+        return res.status(400).json({ error: "Formato de hora inválido. Use HH:mm." });
+      }
       const [h, m] = closeHour.split(":").map(Number);
+      if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+        return res.status(400).json({ error: "Hora inválida." });
+      }
       const d = new Date(existingSlot.date);
       d.setHours(h, m, 0, 0);
       dataToUpdate.closeHour = d;
       // No actualizar hour aquí porque debe ser la hora de inicio, no la de cierre
     }
 
+    // ✅ Validar que availableSpots no sea mayor que capacity
+    if (availableSpots !== undefined && capacity !== undefined) {
+      if (availableSpots > capacity) {
+        return res.status(400).json({ error: "Las plazas disponibles no pueden ser mayores que la capacidad." });
+      }
+    }
+    if (availableSpots !== undefined && existingSlot.capacity && availableSpots > existingSlot.capacity) {
+      return res.status(400).json({ error: "Las plazas disponibles no pueden ser mayores que la capacidad." });
+    }
+    if (capacity !== undefined && existingSlot.availableSpots && existingSlot.availableSpots > capacity) {
+      return res.status(400).json({ error: "La capacidad no puede ser menor que las plazas disponibles actuales." });
+    }
+
     const updatedSlot = await prisma.daycareSlot.update({
       where: { id: slotId },
       data: dataToUpdate,
     });
-
-    console.log("✅ Slot actualizado:", updatedSlot);
 
     // Formatear las horas a "HH:mm" para el frontend
     const formattedSlot = {
@@ -176,11 +222,12 @@ router.put("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
       message: "✅ Slot actualizado correctamente",
       slot: formattedSlot,
     });
-  } catch (error) {
-    console.error("Error al editar slot:", error);
-    return res.status(500).json({ error: "Error al editar el slot." });
-  } finally {
-    await prisma.$disconnect();
+  } catch (error: any) {
+    secureLogger.error("Error al editar slot", { slotId: Number(req.params.id), adminId: req.user.id });
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: "Slot no encontrado." });
+    }
+    return res.status(500).json({ error: "Error interno del servidor." });
   }
 });
 
@@ -203,13 +250,39 @@ router.put("/daycare-slots", authenticateUser, async (req: any, res) => {
   try {
     const { date, startHour, endHour, capacity, status } = req.body;
 
+    // ✅ Validaciones
+    if (!date) {
+      return res.status(400).json({ error: "La fecha es requerida." });
+    }
+
     const targetDate = new Date(date);
     targetDate.setHours(0, 0, 0, 0);
+
+    // ✅ Validar que la fecha sea válida
+    if (isNaN(targetDate.getTime())) {
+      return res.status(400).json({ error: "Fecha inválida." });
+    }
+
+    // ✅ Validar horas
+    if (startHour !== undefined && (isNaN(Number(startHour)) || startHour < 0 || startHour > 23)) {
+      return res.status(400).json({ error: "Hora de inicio inválida." });
+    }
+    if (endHour !== undefined && (isNaN(Number(endHour)) || endHour < 0 || endHour > 23)) {
+      return res.status(400).json({ error: "Hora de fin inválida." });
+    }
+    if (startHour !== undefined && endHour !== undefined && startHour >= endHour) {
+      return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
+    }
+
+    // ✅ Validar capacidad
+    if (capacity !== undefined && (isNaN(Number(capacity)) || capacity <= 0)) {
+      return res.status(400).json({ error: "La capacidad debe ser un número positivo." });
+    }
 
     const updated = await prisma.daycareSlot.updateMany({
       where: {
         date: targetDate,
-        hour: { gte: startHour, lt: endHour },
+        ...(startHour !== undefined && endHour !== undefined && { hour: { gte: startHour, lt: endHour } }),
       },
       data: {
         ...(capacity && { capacity }),
@@ -222,13 +295,14 @@ router.put("/daycare-slots", authenticateUser, async (req: any, res) => {
       message: `✅ ${updated.count} slots actualizados correctamente.`,
     });
   } catch (error) {
-    console.error("Error al editar slots:", error);
+    secureLogger.error("Error al editar slots múltiples", { adminId: req.user.id });
     return res.status(500).json({ error: "Error al editar los slots." });
   }
 });
 /**
  * GET /daycare-slots/available?date=2025-10-19
  * Devuelve todos los slots disponibles (OPEN y con plazas > 0) para un día
+ * Filtra slots pasados para usuarios finales
  */
 router.get("/available/date/:date", async (req, res) => {
   const { date } = req.params;
@@ -242,13 +316,12 @@ router.get("/available/date/:date", async (req, res) => {
   const startOfDay = new Date(year, month - 1, day, 0, 0, 0);
   const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
 
-  console.log(`🔍 Buscando slots para ${date}:`);
-  console.log(`   startOfDay: ${startOfDay.toISOString()}`);
-  console.log(`   endOfDay: ${endOfDay.toISOString()}`);
-
   try {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
 
     // Buscar slots de ese día que estén abiertos y tengan plazas
+    // ✅ Siempre filtrar slots pasados (endpoint público)
     const availableSlots = await prisma.daycareSlot.findMany({
       where: {
         date: {
@@ -257,6 +330,22 @@ router.get("/available/date/:date", async (req, res) => {
         },
         status: "OPEN",
         availableSpots: { gt: 0 },
+        // ✅ Filtrar slots pasados: fechas futuras o de hoy con hora no pasada
+        AND: [
+          {
+            OR: [
+              {
+                date: { gt: todayStart } // Fechas futuras
+              },
+              {
+                AND: [
+                  { date: todayStart }, // Hoy
+                  { openHour: { gte: now } } // Pero con hora no pasada
+                ]
+              }
+            ]
+          }
+        ]
       },
       orderBy: { openHour: "asc" },
       select: {
@@ -269,9 +358,6 @@ router.get("/available/date/:date", async (req, res) => {
         status: true,
       },
     });
-
-    console.log(`   Slots encontrados: ${availableSlots.length}`);
-    console.log(`   Slots:`, availableSlots.map(s => ({ id: s.id, date: s.hour, hour: s.hour, availableSpots: s.availableSpots })));
 
     const formatted = availableSlots.map((slot) => ({
       id: slot.id,
@@ -293,17 +379,39 @@ router.get("/available/date/:date", async (req, res) => {
 
     return res.json({ date, availableSlots: formatted });
   } catch (err) {
-    console.error("Error al obtener slots disponibles:", err);
-    res.status(500).json({ error: "Internal server error" });
+    secureLogger.error("Error al obtener slots disponibles", { date });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
 
 // ✅ Listar todos los slots disponibles
-router.get("/", async (req: any, res) => {
-
+// Si es admin, devuelve todos. Si es usuario final o no autenticado, filtra slots pasados
+router.get("/", optionalAuthenticate, async (req: any, res) => {
   try {
+    const isAdmin = req.user?.role === "ADMIN";
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+
+    const whereClause: any = {};
+    
+    // ✅ Filtrar slots pasados solo para usuarios finales o no autenticados (no admin)
+    if (!isAdmin) {
+      whereClause.OR = [
+        {
+          date: { gt: todayStart } // Fechas futuras
+        },
+        {
+          AND: [
+            { date: todayStart }, // Hoy
+            { openHour: { gte: now } } // Pero con hora no pasada
+          ]
+        }
+      ];
+    }
+
     const slots = await prisma.daycareSlot.findMany({
+      where: whereClause,
       include: { bookings: true },
     });
 
@@ -316,8 +424,8 @@ router.get("/", async (req: any, res) => {
 
     res.json(formattedSlots);
   } catch (err) {
-    console.error("Error listando slots disponibles:", err);
-    res.status(500).json({ error: "Internal server error" });
+    secureLogger.error("Error listando slots disponibles");
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -332,6 +440,11 @@ router.delete("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
 
   try {
     const slotId = Number(req.params.id);
+
+    // ✅ Validar que el ID sea válido
+    if (isNaN(slotId) || slotId <= 0) {
+      return res.status(400).json({ error: "ID de slot inválido." });
+    }
 
     // Buscar si existe
     const slot = await prisma.daycareSlot.findUnique({
@@ -354,7 +467,7 @@ router.delete("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
 
     return res.json({ message: "✅ Slot eliminado correctamente." });
   } catch (error) {
-    console.error("Error al eliminar slot:", error);
+    secureLogger.error("Error al eliminar slot", { slotId: Number(req.params.id), adminId: req.user.id });
     return res.status(500).json({ error: "Error al eliminar el slot." });
   }
 });
@@ -420,7 +533,7 @@ router.delete("/daycare-slots", authenticateUser, async (req: any, res) => {
       message: `✅ ${result.count} slots eliminados correctamente.`,
     });
   } catch (error) {
-    console.error("Error al eliminar slots:", error);
+    secureLogger.error("Error al eliminar slots múltiples", { adminId: req.user.id });
     return res.status(500).json({ error: "Error al eliminar los slots." });
   }
 });

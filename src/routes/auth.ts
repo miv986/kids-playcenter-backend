@@ -2,11 +2,14 @@ import express from "express";
 import bcrypt from "bcrypt";
 import jwt, { JwtPayload } from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
+import { authRateLimiter, strictRateLimiter } from "../middleware/security";
+import { secureLogger } from "../utils/logger";
 
 const router = express.Router();
 const prisma = new PrismaClient();
 import crypto from "crypto";
-import { sendEmail } from "../service/mailing";
+import { sendTemplatedEmail } from "../service/mailing";
+import { getVerificationEmail } from "../service/emailTemplates";
 import { validateDTO } from "../middleware/validation";
 import { RegisterDTO } from "../dtos/RegisterDTO";
 import { authenticateUser } from "../middleware/auth";
@@ -34,7 +37,7 @@ router.get("/me", authenticateUser, async (req: any, res) => {
 });
 
 // POST /api/auth/login
-router.post("/login", async (req, res) => {
+router.post("/login", authRateLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -81,7 +84,7 @@ router.post("/login", async (req, res) => {
     const safeUser = sanitizeUser(user);
     res.json({ user: safeUser, accessToken });
   } catch (err) {
-    console.error(err);
+    secureLogger.error("Error en login", { email: req.body.email });
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -116,7 +119,7 @@ router.get("/verify-email", async (req: any, res: any) => {
 });
 
 // POST /api/auth/register
-router.post("/register", validateDTO(RegisterDTO), async (req, res) => {
+router.post("/register", authRateLimiter, validateDTO(RegisterDTO), async (req, res) => {
   try {
     const { email, password, name, surname, phone_number } = req.body;
     // Verificar si el usuario ya existe
@@ -141,20 +144,45 @@ router.post("/register", validateDTO(RegisterDTO), async (req, res) => {
       },
     });
 
-    const verifyLink = `${process.env.HOST}/api/auth/verify-email?token=${emailVerifyToken}&email=${encodeURIComponent(email)}`;
+    // Construir el enlace de verificación - debe apuntar al BACKEND, no al frontend
+    // En desarrollo, usar localhost automáticamente
+    let backendUrl: string;
+    
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production') {
+        // En desarrollo, usar localhost por defecto (a menos que se especifique BACKEND_URL)
+        backendUrl = process.env.BACKEND_URL || "http://localhost:4000";
+    } else {
+        // En producción, usar BACKEND_URL o API_URL
+        backendUrl = process.env.BACKEND_URL 
+            || process.env.API_URL 
+            || (process.env.HOST && process.env.HOST.includes('/api') ? process.env.HOST.replace('/api', '') : null)
+            || process.env.HOST
+            || "http://localhost:4000";
+    }
+    
+    if (!process.env.BACKEND_URL && process.env.NODE_ENV === 'production') {
+        secureLogger.warn("BACKEND_URL no está configurado en producción");
+    }
 
-    sendEmail(email, "Verifica tu email", `
-            <p>Hola ${name},</p>
-            <p>Gracias por registrarte. Por favor confirma tu email haciendo click en el enlace:</p>
-            <a href="${verifyLink}">Verificar email</a>
+    // Asegurar que el backend URL no termine con / y construir el enlace completo
+    const cleanBackendUrl = backendUrl.replace(/\/$/, '');
+    const verifyLink = `${cleanBackendUrl}/api/auth/verify-email?token=${emailVerifyToken}&email=${encodeURIComponent(email)}`;
+    
+    secureLogger.debug("Enlace de verificación generado", { environment: process.env.NODE_ENV || 'development' });
 
-            <script>
-      // Esto se ejecutará cuando la página de verificación cargue en el navegador
-      setTimeout(() => {
-        window.close(); // intenta cerrar la ventana
-      }, 2000); // 2000ms = 2 segundos
-    </script>
-        `)
+    // Enviar email de verificación usando plantilla
+    try {
+        const emailData = getVerificationEmail(name, verifyLink);
+        await sendTemplatedEmail(
+            email,
+            "Verifica tu correo electrónico - Somriures & Colors",
+            emailData
+        );
+        secureLogger.info(`Email de verificación enviado`, { email });
+    } catch (emailError) {
+        secureLogger.error("Error enviando email de verificación", { email });
+        // No fallar el registro si falla el email
+    }
 
     // Generar token
     const { accessToken, refreshToken } = generateToken(user.id, user.role);
@@ -178,8 +206,8 @@ router.post("/register", validateDTO(RegisterDTO), async (req, res) => {
     const safeUser = sanitizeUser(user);
     res.status(201).json({ user: safeUser, accessToken });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server errork" });
+    secureLogger.error("Error en registro", { email: req.body.email });
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -209,7 +237,7 @@ router.post("/refresh", async (req, res) => {
 
     res.json({ accessToken });
   } catch (err) {
-    console.error(err);
+    secureLogger.warn("Error en refresh token");
     res.status(401).json({ error: "Invalid or expired refresh token" });
   }
 });

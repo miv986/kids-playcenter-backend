@@ -52,3 +52,38 @@ export const authenticateUser = async (req: any, res: any, next: any) => {
         return res.status(401).json({ error: 'Authentication failed' });
     }
 };
+
+// Middleware opcional: intenta autenticar pero no falla si no hay token
+export const optionalAuthenticate = async (req: any, res: any, next: any) => {
+    try {
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader?.startsWith('Bearer ')) {
+            req.user = null;
+            return next();
+        }
+
+        const token = authHeader.split(' ')[1];
+        const secret = process.env.JWT_SECRET!;
+        
+        try {
+            const payload = jwt.verify(token, secret) as JwtPayload;
+            const user = await prisma.user.findUnique({
+                where: { id: payload.userId },
+            });
+
+            if (user && user.isEmailVerified && (user.role === "USER" || user.role === "ADMIN")) {
+                req.user = user;
+            } else {
+                req.user = null;
+            }
+        } catch (err) {
+            req.user = null;
+        }
+        
+        next();
+    } catch (error) {
+        req.user = null;
+        next();
+    }
+};

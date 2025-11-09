@@ -35,6 +35,12 @@ enum Status {
   OPEN
 }
 
+enum AttendanceStatus {
+  PENDING
+  ATTENDED
+  NOT_ATTENDED
+}
+
 enum Package {
   ALEGRIA
   FIESTA
@@ -89,6 +95,7 @@ model DaycareBooking {
   id               Int      @id @default(autoincrement())
   comments         String?
   status           Status   @default(PENDING)
+  attendanceStatus AttendanceStatus @default(PENDING)
 
   startTime        DateTime
   endTime          DateTime

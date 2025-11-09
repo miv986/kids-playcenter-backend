@@ -1,8 +1,9 @@
 import { PrismaClient } from "@prisma/client";
 import express from "express";
-import { authenticateUser } from "../middleware/auth";
+import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import { endOfDay, format, parse, startOfDay } from "date-fns";
 import { validateSlotConflict } from "../utils/validateSlot";
+import { secureLogger } from "../utils/logger";
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -16,14 +17,9 @@ router.post("/", authenticateUser, async (req: any, res) => {
 
     const { date, startTime, endTime, status } = req.body;
 
-    console.log("FECHAS QUE LLEGAN AL BACK:", date, " ", startTime, " ", endTime);
-
     const dateDay = new Date(date);
     const start = new Date(startTime);
     const end = new Date(endTime);
-
-
-    console.log("FECHAS QUE ENVIAMOS AL BACK:", dateDay, " ", start, " ", end);
 
     try {
         await validateSlotConflict({ date: dateDay, start, end });
@@ -42,53 +38,103 @@ router.post("/", authenticateUser, async (req: any, res) => {
         if (err.message?.startsWith("Ya existe") || err.message?.startsWith("El slot") || err.message?.includes("hora de fin")) {
             return res.status(400).json({ error: err.message });
         }
-        console.error("Error creando slot:", err);
-        res.status(500).json({ error: "Internal server error" });
+        secureLogger.error("Error creando slot", { adminId: req.user.id });
+        res.status(500).json({ error: "Error interno del servidor" });
     }
 });
 
 // ✅ Listar todos los slots
-router.get("/", async (req: any, res) => {
-
+// Si es admin, devuelve todos. Si es usuario final o no autenticado, filtra slots pasados
+router.get("/", optionalAuthenticate, async (req: any, res) => {
     try {
+        const isAdmin = req.user?.role === "ADMIN";
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+
+        const whereClause: any = {};
+        
+        // ✅ Filtrar slots pasados solo para usuarios finales o no autenticados (no admin)
+        if (!isAdmin) {
+            whereClause.OR = [
+                {
+                    startTime: { gt: now } // Slots futuros
+                },
+                {
+                    AND: [
+                        { 
+                            startTime: {
+                                gte: todayStart,
+                                lt: new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)
+                            }
+                        }, // Hoy
+                        { startTime: { gte: now } } // Pero con hora no pasada
+                    ]
+                }
+            ];
+        }
+
         const slots = await prisma.birthdaySlot.findMany({
+            where: whereClause,
             include: { booking: true } // para ver si ya tienen reserva
         });
         res.json(slots);
     } catch (err) {
-        console.error("Error listando slots:", err);
-        res.status(500).json({ error: "Internal server error" });
+        secureLogger.error("Error listando slots de cumpleaños");
+        res.status(500).json({ error: "Error interno del servidor" });
     }
 });
 
 // ✅ Listar todos los slots disponibles
+// Filtra slots pasados (endpoint público)
 router.get("/availableSlots", async (req: any, res) => {
-
     try {
-        const slots = await prisma.birthdaySlot.findMany({
-            where: {
-                OR: [
-                    { status: 'OPEN' },
-                    { status: 'CLOSED' }
-                ]
-            },
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
 
+        // ✅ Siempre filtrar slots pasados (endpoint público)
+        const whereClause: any = {
+            OR: [
+                { status: 'OPEN' },
+                { status: 'CLOSED' }
+            ],
+            AND: [
+                {
+                    OR: [
+                        {
+                            startTime: { gt: now } // Slots futuros
+                        },
+                        {
+                            AND: [
+                                { 
+                                    startTime: {
+                                        gte: todayStart,
+                                        lt: new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)
+                                    }
+                                }, // Hoy
+                                { startTime: { gte: now } } // Pero con hora no pasada
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        const slots = await prisma.birthdaySlot.findMany({
+            where: whereClause,
         });
         res.json(slots);
     } catch (err) {
-        console.error("Error listando slots disponibles:", err);
-        res.status(500).json({ error: "Internal server error" });
+        secureLogger.error("Error listando slots disponibles de cumpleaños");
+        res.status(500).json({ error: "Error interno del servidor" });
     }
 });
 
 
 // ✅ Consultar slots de un día concreto
-router.get("/getSlotsByDay/:date", async (req: any, res) => {
-
+// Filtra slots pasados para usuarios finales
+router.get("/getSlotsByDay/:date", authenticateUser, async (req: any, res) => {
     const { date } = req.params;
-    console.log("Fecha recibida en backend", date);
     const [year, month, day] = date.split("-").map(Number);
-
 
     if (!date) {
         return res.status(400).json({ error: "Debes proporcionar un parámetro ?date=dd-MM-yyyy" });
@@ -98,23 +144,52 @@ router.get("/getSlotsByDay/:date", async (req: any, res) => {
     const endOfDay = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
 
     try {
+        const isAdmin = req.user?.role === "ADMIN";
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+
+        const whereClause: any = {
+            startTime: {
+                gte: startOfDay,
+                lte: endOfDay
+            }
+        };
+
+        // ✅ Filtrar slots pasados solo para usuarios finales (no admin)
+        if (!isAdmin) {
+            whereClause.AND = [
+                {
+                    OR: [
+                        {
+                            startTime: { gt: now } // Slots futuros
+                        },
+                        {
+                            AND: [
+                                { 
+                                    startTime: {
+                                        gte: todayStart,
+                                        lt: new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)
+                                    }
+                                }, // Hoy
+                                { startTime: { gte: now } } // Pero con hora no pasada
+                            ]
+                        }
+                    ]
+                }
+            ];
+        }
 
         // 2️⃣ Buscar slots que caigan dentro de ese día
         const slots = await prisma.birthdaySlot.findMany({
-            where: {
-                startTime: {
-                    gte: startOfDay,
-                    lte: endOfDay
-                }
-            },
+            where: whereClause,
             orderBy: { startTime: "asc" },
             include: { booking: true } // si quieres ver reservas asociadas
         });
 
         res.json(slots);
     } catch (err) {
-        console.error("Error obteniendo slots:", err);
-        res.status(500).json({ error: "Internal server error" });
+        secureLogger.error("Error obteniendo slots por día", { date, adminId: req.user.id });
+        res.status(500).json({ error: "Error interno del servidor" });
     }
 });
 
@@ -125,11 +200,18 @@ router.put("/:id", authenticateUser, async (req: any, res) => {
     }
 
     const { id } = req.params;
+    const slotId = Number(id);
+
+    // ✅ Validar que el ID sea válido
+    if (isNaN(slotId) || slotId <= 0) {
+        return res.status(400).json({ error: "ID de slot inválido." });
+    }
+
     const { date, startTime, endTime, status } = req.body;
 
     // 1️⃣ Obtenemos el slot actual
     const current = await prisma.birthdaySlot.findUnique({
-        where: { id: Number(id) }
+        where: { id: slotId }
     });
 
     if (!current) {
@@ -143,13 +225,22 @@ router.put("/:id", authenticateUser, async (req: any, res) => {
     const start = startTime ? new Date(startTime) : current.startTime;
     const end = endTime ? new Date(endTime) : current.endTime;
 
+    // ✅ Validar que las fechas sean válidas
+    if (isNaN(dateDay.getTime()) || isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({ error: "Fechas inválidas. Por favor, verifica las fechas proporcionadas." });
+    }
+
+    // ✅ Validar que la hora de inicio sea anterior a la de fin
+    if (start >= end) {
+        return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
+    }
 
     // 5️⃣ Actualizar
     try {
-        await validateSlotConflict({ id: Number(id), date: dateDay, start, end });
+        await validateSlotConflict({ id: slotId, date: dateDay, start, end });
 
         const updated = await prisma.birthdaySlot.update({
-            where: { id: Number(id) },
+            where: { id: slotId },
             data: {
                 date: dateDay,
                 startTime: start,
@@ -162,8 +253,8 @@ router.put("/:id", authenticateUser, async (req: any, res) => {
         if (err.message?.startsWith("Ya existe") || err.message?.startsWith("El slot") || err.message?.includes("hora de fin")) {
             return res.status(400).json({ error: err.message });
         }
-        console.error("Error actualizando slot:", err);
-        res.status(500).json({ error: "Internal server error" });
+        secureLogger.error("Error actualizando slot de cumpleaños", { slotId: Number(req.params.id), adminId: req.user.id });
+        res.status(500).json({ error: "Error interno del servidor" });
     }
 });
 
@@ -175,15 +266,38 @@ router.delete("/:id", authenticateUser, async (req: any, res) => {
     }
 
     const { id } = req.params;
+    const slotId = Number(id);
+
+    // ✅ Validar que el ID sea válido
+    if (isNaN(slotId) || slotId <= 0) {
+        return res.status(400).json({ error: "ID de slot inválido." });
+    }
 
     try {
+        // ✅ Verificar que el slot existe y no tiene reservas activas
+        const slot = await prisma.birthdaySlot.findUnique({
+            where: { id: slotId },
+            include: { booking: true }
+        });
+
+        if (!slot) {
+            return res.status(404).json({ error: "Slot no encontrado." });
+        }
+
+        if (slot.booking) {
+            return res.status(400).json({ error: "No se puede eliminar un slot que tiene una reserva activa." });
+        }
+
         await prisma.birthdaySlot.delete({
-            where: { id: Number(id) }
+            where: { id: slotId }
         });
         res.json({ message: "Slot eliminado correctamente" });
-    } catch (err) {
-        console.error("Error eliminando slot:", err);
-        res.status(500).json({ error: "Internal server error" });
+    } catch (err: any) {
+        secureLogger.error("Error eliminando slot de cumpleaños", { slotId: Number(id), adminId: req.user.id });
+        if (err.code === 'P2025') {
+            return res.status(404).json({ error: "Slot no encontrado." });
+        }
+        res.status(500).json({ error: "Error interno del servidor." });
     }
 });
 
