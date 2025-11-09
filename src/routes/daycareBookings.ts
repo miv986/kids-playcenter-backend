@@ -4,7 +4,10 @@ import { authenticateUser } from "../middleware/auth";
 import { validateDTO } from "../middleware/validation";
 import { CreateDaycareBookingDTO } from "../dtos/CreateDaycareBookingDTO";
 import { UpdateDaycareBookingDTO } from "../dtos/UpdateDaycareBookingDTO";
-
+import { sendTemplatedEmail } from "../service/mailing";
+import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } from "../service/emailTemplates";
+import { secureLogger } from "../utils/logger";
+import { sanitizeResponse } from "../utils/sanitize";
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -22,13 +25,60 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
     try {
         const { comments, startTime, endTime, slotId, childrenIds } = req.body;
         const user_id = req.user.id;  // Obtener user_id del token verificado
-        const spotsToDiscount = childrenIds.length;
 
-        // 🔍 Determinar qué slots abarca
+        // ✅ Validaciones básicas
+        if (!childrenIds || !Array.isArray(childrenIds) || childrenIds.length === 0) {
+            return res.status(400).json({ error: "Debes seleccionar al menos un niño para la reserva." });
+        }
+
+        if (!startTime || !endTime) {
+            return res.status(400).json({ error: "Debes proporcionar fecha y hora de inicio y fin." });
+        }
+
         const start = new Date(startTime);
         const end = new Date(endTime);
+
+        // ✅ Validar que las fechas sean válidas
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            return res.status(400).json({ error: "Fechas inválidas. Por favor, verifica las fechas proporcionadas." });
+        }
+
+        // ✅ Validar que la hora de inicio sea anterior a la de fin
+        if (start >= end) {
+            return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
+        }
+
         const date = new Date(start);
         date.setHours(0, 0, 0, 0);
+
+        // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede reservar fechas pasadas)
+        if (req.user.role !== 'ADMIN') {
+            const now = new Date();
+            now.setHours(0, 0, 0, 0);
+            if (date < now) {
+                return res.status(400).json({ error: "No se pueden reservar slots con fechas pasadas." });
+            }
+            // Validar también que la hora de inicio no sea pasada si es hoy
+            const nowWithTime = new Date();
+            if (date.getTime() === now.getTime() && start < nowWithTime) {
+                return res.status(400).json({ error: "No se pueden reservar slots con horarios pasados." });
+            }
+
+            // ✅ Validar que los niños pertenezcan al usuario
+            const userChildren = await prisma.user.findMany({
+                where: {
+                    id: { in: childrenIds },
+                    tutorId: user_id,
+                    role: 'CHILD'
+                }
+            });
+
+            if (userChildren.length !== childrenIds.length) {
+                return res.status(403).json({ error: "Algunos de los niños seleccionados no pertenecen a tu cuenta." });
+            }
+        }
+
+        const spotsToDiscount = childrenIds.length;
 
         const startHour = start.getHours();
         const endHour = end.getHours();
@@ -89,7 +139,10 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
                         connect: childrenIds.map((id: number) => ({ id })) //vincula hijos
                     },
                 },
-                include: { children: true },
+                include: { 
+                    children: true,
+                    user: true
+                },
             });
 
             // Descontar plazas de cada slot por cada niño
@@ -102,13 +155,49 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             return newBooking;
         });
 
+        // Enviar email de confirmación
+        if (booking.user?.email) {
+            try {
+                const emailData = getDaycareBookingConfirmedEmail(
+                    booking.user.name,
+                    {
+                        id: booking.id,
+                        startTime: booking.startTime,
+                        endTime: booking.endTime,
+                        children: booking.children,
+                        status: booking.status
+                    }
+                );
+                
+                await sendTemplatedEmail(
+                    booking.user.email,
+                    "Reserva de ludoteca confirmada - Somriures & Colors",
+                    emailData
+                );
+                secureLogger.info("Email de confirmación de reserva enviado", { userEmail: booking.user.email });
+            } catch (emailError) {
+                secureLogger.error("Error enviando email de confirmación", { userEmail: booking.user.email });
+                // No fallar la creación si falla el email
+            }
+        }
+
         return res.status(201).json({
             message: "✅ Reserva creada correctamente.",
-            booking: booking,
+            booking: sanitizeResponse(booking),
         });
-    } catch (err) {
-        console.error("Error al crear reserva:", err);
-        return res.status(500).json({ error: "Internal server error." });
+    } catch (err: any) {
+        secureLogger.error("Error al crear reserva", { userId: req.user.id });
+        // Manejar errores específicos de Prisma
+        if (err.code === 'P2002') {
+            return res.status(400).json({ error: "Ya existe una reserva con estos datos." });
+        }
+        if (err.code === 'P2025') {
+            return res.status(404).json({ error: "Uno de los recursos no fue encontrado." });
+        }
+        if (err.code === 'P2003') {
+            return res.status(400).json({ error: "Referencia inválida. Verifica los IDs proporcionados." });
+        }
+        return res.status(500).json({ error: "Error interno del servidor." });
     } 
 }
 );
@@ -127,12 +216,10 @@ router.get("/", authenticateUser, async (req: any, res) => {
             orderBy: { startTime: "asc" },
         });
 
-        console.log("📋 Bookings en backend:", JSON.stringify(bookings, null, 2));
-
-        res.json(bookings);
+        res.json(sanitizeResponse(bookings));
     } catch (err) {
-        console.error("Error al listar reservas:", err);
-        res.status(500).json({ error: "Internal server error" });
+        secureLogger.error("Error al listar reservas", { userId: req.user.id });
+        res.status(500).json({ error: "Error interno del servidor" });
     }
 });
 
@@ -156,14 +243,71 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
 
+        // ✅ No permitir modificar reservas con estado CLOSED
+        if (existingBooking.status === 'CLOSED') {
+            return res.status(400).json({ error: "No se puede modificar una reserva cerrada (CLOSED)." });
+        }
+
         const { comments, startTime, endTime, childrenIds } = req.body;
         const userId = req.user.id;
+
+        // ✅ Validaciones básicas
+        if (!childrenIds || !Array.isArray(childrenIds) || childrenIds.length === 0) {
+            return res.status(400).json({ error: "Debes seleccionar al menos un niño para la reserva." });
+        }
+
+        if (!startTime || !endTime) {
+            return res.status(400).json({ error: "Debes proporcionar fecha y hora de inicio y fin." });
+        }
 
         // 🔢 Determinar nuevos slots que abarca la nueva franja
         const start = new Date(startTime);
         const end = new Date(endTime);
+
+        // ✅ Validar que las fechas sean válidas
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            return res.status(400).json({ error: "Fechas inválidas. Por favor, verifica las fechas proporcionadas." });
+        }
+
+        // ✅ Validar que la hora de inicio sea anterior a la de fin
+        if (start >= end) {
+            return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
+        }
+
         const date = new Date(start);
         date.setHours(0, 0, 0, 0);
+
+        // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede modificar a fechas pasadas)
+        if (req.user.role !== 'ADMIN') {
+            const now = new Date();
+            now.setHours(0, 0, 0, 0);
+            if (date < now) {
+                return res.status(400).json({ error: "No se pueden modificar reservas a fechas pasadas." });
+            }
+            // Validar también que la hora de inicio no sea pasada si es hoy
+            const nowWithTime = new Date();
+            if (date.getTime() === now.getTime() && start < nowWithTime) {
+                return res.status(400).json({ error: "No se pueden modificar reservas a horarios pasados." });
+            }
+
+            // ✅ Validar que el usuario solo pueda modificar sus propias reservas
+            if (existingBooking.userId !== userId) {
+                return res.status(403).json({ error: "No tienes permiso para modificar esta reserva." });
+            }
+
+            // ✅ Validar que los niños pertenezcan al usuario
+            const userChildren = await prisma.user.findMany({
+                where: {
+                    id: { in: childrenIds },
+                    tutorId: userId,
+                    role: 'CHILD'
+                }
+            });
+
+            if (userChildren.length !== childrenIds.length) {
+                return res.status(403).json({ error: "Algunos de los niños seleccionados no pertenecen a tu cuenta." });
+            }
+        }
 
         const startHour = start.getHours();
         const endHour = end.getHours();
@@ -227,11 +371,18 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
 
         return res.json({
             message: "✅ Reserva modificada correctamente.",
-            booking: updatedBooking,
+            booking: sanitizeResponse(updatedBooking),
         });
-    } catch (err) {
-        console.error("Error al modificar reserva:", err);
-        return res.status(500).json({ error: "Internal server error." });
+    } catch (err: any) {
+        secureLogger.error("Error al modificar reserva", { bookingId: Number(req.params.id), userId: req.user.id });
+        // Manejar errores específicos de Prisma
+        if (err.code === 'P2025') {
+            return res.status(404).json({ error: "Reserva o recursos relacionados no encontrados." });
+        }
+        if (err.code === 'P2003') {
+            return res.status(400).json({ error: "Referencia inválida. Verifica los IDs proporcionados." });
+        }
+        return res.status(500).json({ error: "Error interno del servidor." });
     } 
 }
 );
@@ -246,15 +397,36 @@ router.put("/:id/cancel", authenticateUser, async (req: any, res: any) => {
     
     try {
         const bookingId = Number(req.params.id);
+
+        // ✅ Validar que el ID sea válido
+        if (isNaN(bookingId) || bookingId <= 0) {
+            return res.status(400).json({ error: "ID de reserva inválido." });
+        }
         
         const existingBooking = await prisma.daycareBooking.findUnique({
             where: { id: bookingId },
-            include: { slots: true, children: true }
+            include: { 
+                slots: true, 
+                children: true,
+                user: true
+            }
         });
         
         if (!existingBooking) {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
+
+        // ✅ No permitir cancelar reservas con estado CLOSED
+        if (existingBooking.status === 'CLOSED') {
+            return res.status(400).json({ error: "No se puede cancelar una reserva cerrada (CLOSED)." });
+        }
+
+        // ✅ Validar que el usuario solo pueda cancelar sus propias reservas (a menos que sea admin)
+        if (req.user.role !== 'ADMIN' && existingBooking.userId !== req.user.id) {
+            return res.status(403).json({ error: "No tienes permiso para cancelar esta reserva." });
+        }
+        
+        const previousStatus = existingBooking.status;
         
         // Solo cancelar si no está ya cancelada
         if (existingBooking.status !== 'CANCELLED') {
@@ -274,10 +446,93 @@ router.put("/:id/cancel", authenticateUser, async (req: any, res: any) => {
             });
         }
         
+        // Enviar email de cancelación
+        if (existingBooking.user?.email && previousStatus !== 'CANCELLED') {
+            try {
+                const emailData = getDaycareBookingStatusChangedEmail(
+                    existingBooking.user.name,
+                    {
+                        id: existingBooking.id,
+                        startTime: existingBooking.startTime,
+                        endTime: existingBooking.endTime,
+                        children: existingBooking.children,
+                        status: 'CANCELLED'
+                    },
+                    previousStatus
+                );
+                
+                await sendTemplatedEmail(
+                    existingBooking.user.email,
+                    "Reserva de ludoteca cancelada - Somriures & Colors",
+                    emailData
+                );
+                secureLogger.info("Email de cancelación enviado", { userEmail: existingBooking.user.email });
+            } catch (emailError) {
+                secureLogger.error("Error enviando email de cancelación", { userEmail: existingBooking.user.email });
+                // No fallar la cancelación si falla el email
+            }
+        }
+        
         return res.json({ message: "✅ Reserva cancelada correctamente" });
-    } catch (err) {
-        console.error("Error al cancelar reserva:", err);
-        return res.status(500).json({ error: "Internal server error" });
+    } catch (err: any) {
+        secureLogger.error("Error al cancelar reserva", { bookingId: Number(req.params.id), userId: req.user.id });
+        if (err.code === 'P2025') {
+            return res.status(404).json({ error: "Reserva no encontrada." });
+        }
+        return res.status(500).json({ error: "Error interno del servidor." });
+    }
+});
+
+// MARCAR ASISTENCIA DE RESERVA DAYCARE (SOLO ADMIN)
+router.put("/:id/attendance", authenticateUser, async (req: any, res: any) => {
+    if (req.user.role !== "ADMIN") {
+        return res.status(403).json({ error: "Forbidden. Solo los administradores pueden marcar asistencia." });
+    }
+
+    try {
+        const bookingId = Number(req.params.id);
+
+        // ✅ Validar que el ID sea válido
+        if (isNaN(bookingId) || bookingId <= 0) {
+            return res.status(400).json({ error: "ID de reserva inválido." });
+        }
+
+        const { attendanceStatus } = req.body;
+
+        if (!attendanceStatus || !['ATTENDED', 'NOT_ATTENDED', 'PENDING'].includes(attendanceStatus)) {
+            return res.status(400).json({ error: "Estado de asistencia inválido. Debe ser ATTENDED, NOT_ATTENDED o PENDING." });
+        }
+
+        const booking = await prisma.daycareBooking.findUnique({
+            where: { id: bookingId },
+            include: { user: { include: { children: true } }, slots: true, children: true },
+        });
+
+        if (!booking) {
+            return res.status(404).json({ error: "Reserva no encontrada." });
+        }
+
+        // Solo se puede marcar asistencia si la reserva está confirmada y no cancelada
+        if (booking.status === 'CANCELLED') {
+            return res.status(400).json({ error: "No se puede marcar asistencia de una reserva cancelada." });
+        }
+
+        const updatedBooking = await prisma.daycareBooking.update({
+            where: { id: bookingId },
+            data: { attendanceStatus },
+            include: { user: { include: { children: true } }, slots: true, children: true },
+        });
+
+        return res.json({
+            message: `✅ Asistencia marcada como ${attendanceStatus === 'ATTENDED' ? 'asistió' : attendanceStatus === 'NOT_ATTENDED' ? 'no asistió' : 'pendiente'}.`,
+            booking: sanitizeResponse(updatedBooking),
+        });
+    } catch (err: any) {
+        secureLogger.error("Error al marcar asistencia", { bookingId: Number(req.params.id), adminId: req.user.id });
+        if (err.code === 'P2025') {
+            return res.status(404).json({ error: "Reserva no encontrada." });
+        }
+        return res.status(500).json({ error: "Error interno del servidor." });
     }
 });
 
@@ -291,6 +546,11 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
 
         const { id } = req.params;
         const bookingId = Number(id);
+
+        // ✅ Validar que el ID sea válido
+        if (isNaN(bookingId) || bookingId <= 0) {
+            return res.status(400).json({ error: "ID de reserva inválido." });
+        }
 
         // 🔍 Buscar la reserva con sus slots
         const booking = await prisma.daycareBooking.findUnique({
@@ -320,12 +580,66 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
         });
 
         res.json({ message: "✅ Reserva eliminada correctamente y plazas liberadas." });
-    } catch (err) {
-        console.error("Error al eliminar reserva:", err);
-        res.status(500).json({ error: "Internal server error" });
+    } catch (err: any) {
+        secureLogger.error("Error al eliminar reserva", { bookingId: Number(req.params.id), adminId: req.user.id });
+        if (err.code === 'P2025') {
+            return res.status(404).json({ error: "Reserva no encontrada." });
+        }
+        if (err.code === 'P2003') {
+            return res.status(400).json({ error: "No se puede eliminar la reserva debido a referencias existentes." });
+        }
+        res.status(500).json({ error: "Error interno del servidor." });
     } 
 });
 
 
+
+// MARCAR RESERVAS PASADAS COMO CLOSED (ADMIN o automático)
+// Endpoint con autenticación para ejecución manual por admin
+router.post("/close-past-bookings", authenticateUser, async (req: any, res: any) => {
+    // ✅ Solo admin puede ejecutar manualmente
+    if (req.user.role !== "ADMIN") {
+        return res.status(403).json({ error: "Forbidden. Solo los administradores pueden ejecutar esta acción." });
+    }
+
+    try {
+        const { closePastBookingsAndNotify } = await import("../services/closeBookingsService");
+        const result = await closePastBookingsAndNotify();
+
+        return res.json({
+            message: `✅ ${result.closed} reserva(s) pasada(s) marcada(s) como CLOSED. ${result.notified} notificación(es) enviada(s).`,
+            closed: result.closed,
+            notified: result.notified
+        });
+    } catch (err: any) {
+        secureLogger.error("Error cerrando reservas pasadas", { adminId: req.user.id });
+        return res.status(500).json({ error: "Error interno del servidor." });
+    }
+});
+
+// Endpoint sin autenticación para ejecución automática por cron job
+// Protegido por token secreto en el header
+router.post("/close-past-bookings-auto", async (req: any, res: any) => {
+    const secretToken = req.headers['x-cron-secret'];
+    const expectedToken = process.env.CRON_SECRET_TOKEN;
+
+    if (!expectedToken || secretToken !== expectedToken) {
+        return res.status(401).json({ error: "Unauthorized. Token inválido." });
+    }
+
+    try {
+        const { closePastBookingsAndNotify } = await import("../services/closeBookingsService");
+        const result = await closePastBookingsAndNotify();
+
+        return res.json({
+            message: `✅ ${result.closed} reserva(s) pasada(s) marcada(s) como CLOSED. ${result.notified} notificación(es) enviada(s).`,
+            closed: result.closed,
+            notified: result.notified
+        });
+    } catch (err: any) {
+        secureLogger.error("Error cerrando reservas pasadas (auto)", { ip: req.ip });
+        return res.status(500).json({ error: "Error interno del servidor." });
+    }
+});
 
 export default router;

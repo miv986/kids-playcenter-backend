@@ -3,6 +3,7 @@ import { authenticateUser } from "../middleware/auth";
 import { PrismaClient } from "@prisma/client";
 import { validateDTO } from "../middleware/validation";
 import { UpdatePackageDTO } from "../dtos/UpdatePackageDTO";
+import { secureLogger } from "../utils/logger";
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -16,8 +17,8 @@ router.get("/", async (req: any, res) => {
     });
     res.json(packages);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+    secureLogger.error("Error obteniendo paquetes");
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -33,8 +34,8 @@ router.get("/all", authenticateUser, async (req: any, res) => {
     });
     res.json(packages);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+    secureLogger.error("Error obteniendo paquetes");
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -53,8 +54,8 @@ router.put("/:type", authenticateUser, validateDTO(UpdatePackageDTO), async (req
     });
     res.json(updatedPackage);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error" });
+    secureLogger.error("Error actualizando paquete", { adminId: req.user.id, type });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 

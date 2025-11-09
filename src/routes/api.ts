@@ -4,6 +4,8 @@ import { authenticateUser } from "../middleware/auth";
 import { CreateChildDTO } from "../dtos/CreateChildDTO";
 import { validateDTO } from "../middleware/validation";
 import { CreateChildNoteDTO } from "../dtos/CreateChildNoteDTO";
+import { secureLogger } from "../utils/logger";
+import { sanitizeResponse } from "../utils/sanitize";
 const prisma = new PrismaClient();
 
 const router = express.Router();
@@ -14,16 +16,39 @@ router.post('/addChild', authenticateUser, validateDTO(CreateChildDTO), async (r
   try {
 
     const { name, surname, dateOfBirth, notes, medicalNotes, allergies, emergency_contact_name_1, emergency_phone_1, emergency_contact_name_2, emergency_phone_2 } = req.body;
-    console.log(req, "REQ");
+    
+    // ✅ Validaciones básicas
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "El nombre es requerido." });
+    }
+    if (!surname || !surname.trim()) {
+      return res.status(400).json({ error: "El apellido es requerido." });
+    }
+    if (!dateOfBirth) {
+      return res.status(400).json({ error: "La fecha de nacimiento es requerida." });
+    }
+
     const user_id = req.user.id;
     if (!user_id) {
       return res.status(401).json({ error: "Tutor no autenticado" });
     }
+
+    // ✅ Validar que la fecha de nacimiento sea válida
+    const birthDate = new Date(`${dateOfBirth}T00:00:00.000Z`);
+    if (isNaN(birthDate.getTime())) {
+      return res.status(400).json({ error: "Fecha de nacimiento inválida." });
+    }
+
+    // ✅ Validar que la fecha de nacimiento no sea futura
+    if (birthDate > new Date()) {
+      return res.status(400).json({ error: "La fecha de nacimiento no puede ser futura." });
+    }
+
     const child = await prisma.user.create({
       data: {
-        name: name,
-        surname: surname,
-        dateOfBirth: new Date(`${dateOfBirth}T00:00:00.000Z`),
+        name: name.trim(),
+        surname: surname.trim(),
+        dateOfBirth: birthDate,
         notes: notes,
         medicalNotes: medicalNotes,
         allergies: allergies,
@@ -37,10 +62,10 @@ router.post('/addChild', authenticateUser, validateDTO(CreateChildDTO), async (r
 
       } as Prisma.UserUncheckedCreateInput
     });
-    res.status(201).json(child);
+    res.status(201).json(sanitizeResponse(child));
   } catch (error) {
-    res.status(500).json({ error: (error as Error).message });
-
+    secureLogger.error("Error creando hijo", { tutorId: req.user.id });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -73,10 +98,10 @@ router.get("/children", authenticateUser, async (req: any, res) => {
       },
     });
 
-    return res.status(200).json({ children });
+    return res.status(200).json({ children: sanitizeResponse(children) });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error obteniendo hijos", { tutorId: req.user.id });
+    return res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -118,9 +143,10 @@ router.put("/updateChild/:childId", authenticateUser, async (req: any, res) => {
 
       }
     });
-    res.status(200).json(updateChild);
+    res.status(200).json(sanitizeResponse(updateChild));
   } catch (error) {
-    res.status(500).json({ error: (error as Error).message })
+    secureLogger.error("Error actualizando hijo", { tutorId: req.user.id, childId: child_id });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 
 });
@@ -156,8 +182,8 @@ router.delete("/deleteChild/:childId", authenticateUser, async (req: any, res) =
 
     return res.status(200).json({ message: "Child eliminado correctamente" });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error eliminando hijo", { adminId: req.user.id, childId: child_id });
+    return res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -236,14 +262,14 @@ router.get("/admin/tutors", authenticateUser, async (req: any, res) => {
     ]);
 
     res.status(200).json({
-      tutors,
+      tutors: sanitizeResponse(tutors),
       total,
       page: pageNum,
       totalPages: Math.ceil(total / limitNum)
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error obteniendo tutores", { adminId: req.user.id });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -286,12 +312,15 @@ router.get("/admin/tutor/:tutorId", authenticateUser, async (req: any, res) => {
       return res.status(404).json({ error: "Tutor no encontrado" });
     }
 
-    res.status(200).json(tutorWithChildren);
+    res.status(200).json(sanitizeResponse(tutorWithChildren));
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error obteniendo tutor", { adminId: req.user.id, tutorId });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
+//
+// CHILD NOTES - ADMIN PUEDE DEJAR NOTAS A PADRES SOBRE SUS HIJOS
+//
 
 // PUT /api/admin/tutor/child/:childId - Actualizar notas de un hijo (ADMIN)
 router.put("/admin/tutor/child/:childId", authenticateUser, async (req: any, res) => {
@@ -322,16 +351,14 @@ router.put("/admin/tutor/child/:childId", authenticateUser, async (req: any, res
       }
     });
 
-    res.status(200).json(updatedChild);
+    res.status(200).json(sanitizeResponse(updatedChild));
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error actualizando notas de hijo", { adminId: req.user.id, childId });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
-//
-// CHILD NOTES - ADMIN PUEDE DEJAR NOTAS A PADRES SOBRE SUS HIJOS
-//
+
 
 // POST /api/childNote - Crear una nota del admin para un niño (SOLO ADMIN)
 router.post("/childNote", authenticateUser, validateDTO(CreateChildNoteDTO), async (req: any, res) => {
@@ -379,10 +406,10 @@ router.post("/childNote", authenticateUser, validateDTO(CreateChildNoteDTO), asy
       }
     });
 
-    res.status(201).json(note);
+    res.status(201).json(sanitizeResponse(note));
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error creando nota de hijo", { adminId: req.user.id });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -424,13 +451,13 @@ router.get("/childNote/child/:childId", authenticateUser, async (req: any, res) 
         }
       });
 
-      return res.status(200).json(notes);
+      return res.status(200).json(sanitizeResponse(notes));
     }
 
     return res.status(403).json({ error: "No autorizado" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error obteniendo notas de hijo", { userId: req.user.id, childId });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -476,10 +503,64 @@ router.put("/childNote/:noteId/read", authenticateUser, async (req: any, res) =>
       }
     });
 
-    res.status(200).json(updatedNote);
+    res.status(200).json(sanitizeResponse(updatedNote));
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error marcando nota como leída", { userId: req.user.id, noteId });
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// PUT /api/childNote/:noteId - Actualizar una nota (SOLO ADMIN, solo el que la creó)
+router.put("/childNote/:noteId", authenticateUser, async (req: any, res) => {
+  if (req.user.role !== "ADMIN") {
+    return res.status(403).json({ error: "No autorizado" });
+  }
+
+  const noteId = parseInt(req.params.noteId);
+  const { content, images } = req.body;
+
+  try {
+    // Verificar que la nota existe y pertenece al admin actual
+    const note = await prisma.childNote.findUnique({
+      where: { id: noteId }
+    });
+
+    if (!note) {
+      return res.status(404).json({ error: "Nota no encontrada" });
+    }
+
+    if (note.adminId !== req.user.id) {
+      return res.status(403).json({ error: "Solo puedes editar tus propias notas" });
+    }
+
+    const updatedNote = await prisma.childNote.update({
+      where: { id: noteId },
+      data: {
+        content,
+        images: images || []
+      },
+      include: {
+        child: {
+          select: {
+            id: true,
+            name: true,
+            surname: true
+          }
+        },
+        admin: {
+          select: {
+            id: true,
+            name: true,
+            surname: true
+          }
+        }
+      }
+    });
+
+    res.status(200).json(sanitizeResponse(updatedNote));
+  } catch (error) {
+    secureLogger.error("Error actualizando nota", { adminId: req.user.id, noteId });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
@@ -498,8 +579,8 @@ router.delete("/childNote/:noteId", authenticateUser, async (req: any, res) => {
 
     res.status(200).json({ message: "Nota eliminada correctamente" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: (error as Error).message });
+    secureLogger.error("Error eliminando nota", { adminId: req.user.id, noteId });
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 

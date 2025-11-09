@@ -3,6 +3,8 @@ import bodyParser from 'body-parser';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import { corsMiddleware } from './middleware/cors';
+import { securityHeaders, generalRateLimiter } from './middleware/security';
+import { secureLogger } from './utils/logger';
 import apiRoutes from './routes/api';
 import authRoutes from './routes/auth';
 import apiBookings from './routes/bookings';
@@ -24,15 +26,28 @@ const app = express();
 
 const PORT = process.env.PORT || 4000;
 
-// Middleware
-app.use(corsMiddleware);
-app.use(cookieParser());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// Security middleware (debe ir primero)
+app.use(securityHeaders);
 
-// Logging middleware
+// CORS
+app.use(corsMiddleware);
+
+// Body parser
+app.use(cookieParser());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
+
+// Rate limiting general
+app.use(generalRateLimiter);
+
+// Logging middleware seguro (no expone datos sensibles)
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  const sanitizedUrl = req.url.replace(/token=[^&]*/gi, 'token=[REDACTED]')
+                                .replace(/email=[^&]*/gi, 'email=[REDACTED]');
+  secureLogger.info(`${req.method} ${sanitizedUrl}`, {
+    ip: req.ip,
+    userAgent: req.get('user-agent')
+  });
   next();
 });
 
@@ -63,26 +78,48 @@ app.get('/', (req, res) => {
   });
 });
 
-// Manejo de errores global
+// Manejo de errores global (seguro)
 app.use((err: any, req: any, res: any, next: any) => {
-  console.error('Error:', err.stack);
-  res.status(500).json({
+  // Log seguro (no expone stack traces completos en producción)
+  secureLogger.error('Error en servidor', {
+    message: err.message,
+    path: req.path,
+    method: req.method,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+
+  // Respuesta segura (no expone información interna)
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  res.status(err.status || 500).json({
     error: 'Something went wrong!',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+    ...(isDevelopment && { 
+      message: err.message,
+      // Solo en desarrollo: información adicional
+    })
   });
 });
 
-// Manejo de rutas no encontradas
+// Manejo de rutas no encontradas (sin exponer la ruta completa)
 app.use((req, res) => {
+  secureLogger.warn('Ruta no encontrada', { method: req.method, path: req.path });
   res.status(404).json({
-    error: 'Route not found',
-    path: req.originalUrl
+    error: 'Route not found'
   });
 });
 
 // Iniciar servidor
 app.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📱 CORS enabled for: http://localhost:3000`);
-  console.log(`📡 API endpoints: http://localhost:${PORT}/api`);
+  secureLogger.info(`🚀 Server running on port ${PORT}`);
+  secureLogger.info(`📱 CORS enabled`);
+  secureLogger.info(`📡 API endpoints: /api`);
+  secureLogger.info(`🔒 Security headers enabled`);
+  secureLogger.info(`⏱️ Rate limiting enabled`);
+  
+  // Inicializar trabajos programados (cron jobs)
+  try {
+    const { initializeScheduledJobs } = await import("./jobs/bookingScheduler");
+    initializeScheduledJobs();
+  } catch (error) {
+    secureLogger.error("Error inicializando trabajos programados", error);
+  }
 });
