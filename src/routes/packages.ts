@@ -3,7 +3,6 @@ import { authenticateUser } from "../middleware/auth";
 import { PrismaClient } from "@prisma/client";
 import { validateDTO } from "../middleware/validation";
 import { UpdatePackageDTO } from "../dtos/UpdatePackageDTO";
-import { secureLogger } from "../utils/logger";
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -17,8 +16,8 @@ router.get("/", async (req: any, res) => {
     });
     res.json(packages);
   } catch (err) {
-    secureLogger.error("Error obteniendo paquetes");
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -34,8 +33,8 @@ router.get("/all", authenticateUser, async (req: any, res) => {
     });
     res.json(packages);
   } catch (err) {
-    secureLogger.error("Error obteniendo paquetes");
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -48,14 +47,24 @@ router.put("/:type", authenticateUser, validateDTO(UpdatePackageDTO), async (req
   const { type } = req.params;
 
   try {
+    // Filtrar solo los campos permitidos para actualizar
+    const allowedFields = ['name', 'duration', 'price', 'priceValue', 'featuresEs', 'featuresVa', 'perChildTextEs', 'perChildTextVa', 'isPopular', 'isActive'];
+    const updateData: any = {};
+    
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    }
+
     const updatedPackage = await prisma.birthdayPackage.update({
       where: { type },
-      data: req.body
+      data: updateData
     });
     res.json(updatedPackage);
   } catch (err) {
-    secureLogger.error("Error actualizando paquete", { adminId: req.user.id, type });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

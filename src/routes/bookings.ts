@@ -5,8 +5,6 @@ import { validateDTO } from "../middleware/validation";
 import { CreateBirthdayBookingDTO } from "../dtos/CreateBirthdayBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getBirthdayBookingCreatedEmail, getBirthdayBookingConfirmedEmail, getBirthdayBookingCancelledEmail } from "../service/emailTemplates";
-import { secureLogger } from "../utils/logger";
-import { sanitizeResponse } from "../utils/sanitize";
 const prisma = new PrismaClient();
 const router = express.Router();
 
@@ -16,25 +14,13 @@ const router = express.Router();
 
 //CREAR RESERVA CUMPLEAÑOS
 router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), async (req: any, res: any) => {
-    const { guest, guestEmail, number_of_kids, contact_number, packageType, comments, slotId } = req.body;
-    const slot = await prisma.birthdaySlot.findUnique({
-        where: { id: slotId },
-        include: { booking: true } // para verificar si ya tiene reserva
-    });
+    const { guest, guestEmail, number_of_kids, contact_number, comments, slotId, packageType } = req.body;
 
-    if (!slot) {
-        return res.status(404).json({ error: "Slot no encontrado" });
+    // ✅ Validaciones básicas antes de la transacción
+    if (!slotId || isNaN(Number(slotId))) {
+        return res.status(400).json({ error: "ID de slot inválido." });
     }
 
-    if (slot.booking) {
-        return res.status(400).json({ error: "Este slot ya está reservado" });
-    }
-
-    if (slot.status !== "OPEN") {
-        return res.status(400).json({ error: "Este slot no está disponible" });
-    }
-
-    // ✅ Validaciones adicionales
     if (!number_of_kids || number_of_kids <= 0) {
         return res.status(400).json({ error: "El número de niños debe ser mayor a 0." });
     }
@@ -47,36 +33,53 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
         return res.status(400).json({ error: "Debes proporcionar un número de contacto." });
     }
 
-    // ✅ Validar que la fecha del slot no sea pasada
-    const now = new Date();
-    const slotDate = new Date(slot.startTime);
-    const slotDateOnly = new Date(slotDate);
-    slotDateOnly.setHours(0, 0, 0, 0);
-    const nowDateOnly = new Date(now);
-    nowDateOnly.setHours(0, 0, 0, 0);
-    
-    if (slotDateOnly < nowDateOnly) {
-        return res.status(400).json({ error: "No se pueden reservar slots con fechas pasadas." });
-    }
-    
-    // Si es hoy, validar que la hora no sea pasada
-    if (slotDateOnly.getTime() === nowDateOnly.getTime() && slotDate < now) {
-        return res.status(400).json({ error: "No se pueden reservar slots con horarios pasados." });
-    }
-
-    // ✅ Validar que slotId sea un número válido
-    if (!slotId || isNaN(Number(slotId))) {
-        return res.status(400).json({ error: "ID de slot inválido." });
-    }
-
-    // ✅ Validar que las fechas sean válidas
-    if (isNaN(slotDate.getTime())) {
-        return res.status(400).json({ error: "Fecha del slot inválida." });
+    // ✅ Validar formato de email si se proporciona
+    if (guestEmail && guestEmail.trim() !== '') {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(guestEmail.trim())) {
+            return res.status(400).json({ error: "El formato del email no es válido." });
+        }
     }
 
     try {
-        // ✅ Usar transacción para garantizar atomicidad
+        // ✅ Usar transacción para prevenir race conditions - verificar y crear atómicamente
         const addedBooking = await prisma.$transaction(async (tx) => {
+            // Verificar slot dentro de la transacción para evitar race conditions
+            const slot = await tx.birthdaySlot.findUnique({
+                where: { id: Number(slotId) },
+                include: { booking: true }
+            });
+
+            if (!slot) {
+                throw new Error("Slot no encontrado");
+            }
+
+            // Verificar si hay una reserva activa (no cancelada) en este slot
+            if (slot.booking && slot.booking.status !== 'CANCELLED') {
+                throw new Error("Este slot ya está reservado");
+            }
+
+            if (slot.status !== "OPEN") {
+                throw new Error("Este slot no está disponible");
+            }
+
+            // ✅ Validar que la fecha del slot no sea pasada
+            const now = new Date();
+            const slotDate = new Date(slot.startTime);
+            const slotDateOnly = new Date(slotDate);
+            slotDateOnly.setHours(0, 0, 0, 0);
+            const nowDateOnly = new Date(now);
+            nowDateOnly.setHours(0, 0, 0, 0);
+
+            if (slotDateOnly < nowDateOnly) {
+                throw new Error("No se pueden reservar slots con fechas pasadas.");
+            }
+
+            // Si es hoy, validar que la hora no sea pasada
+            if (slotDateOnly.getTime() === nowDateOnly.getTime() && slotDate < now) {
+                throw new Error("No se pueden reservar slots con horarios pasados.");
+            }
+
             // Crear la reserva
             const booking = await tx.birthdayBooking.create({
                 data: {
@@ -85,9 +88,9 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
                     number_of_kids: number_of_kids,
                     contact_number: contact_number.trim(),
                     comments: comments?.trim(),
-                    packageType: packageType,
+                    packageType: packageType || 'ALEGRIA',
                     slot: { connect: { id: Number(slotId) } }
-                },
+                } as any,
                 include: {
                     slot: true
                 }
@@ -110,27 +113,33 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
                     date: addedBooking.slot.date,
                     startTime: addedBooking.slot.startTime,
                     endTime: addedBooking.slot.endTime,
-                    packageType: packageType,
                     number_of_kids: number_of_kids,
                     contact_number: contact_number
                 });
-                
+
                 await sendTemplatedEmail(
                     guestEmail,
                     "Reserva de cumpleaños recibida - Somriures & Colors",
                     emailData
                 );
-                secureLogger.info("Email de confirmación de reserva enviado", { guestEmail });
+                console.log(`✅ Email de confirmación de reserva enviado a ${guestEmail}`);
             } catch (emailError) {
-                secureLogger.error("Error enviando email de confirmación", { guestEmail });
+                console.error("Error enviando email de confirmación:", emailError);
                 // No fallar la creación si falla el email
             }
         }
 
-        res.status(201).json(sanitizeResponse(addedBooking));
+        res.status(201).json(addedBooking);
     } catch (err: any) {
-        secureLogger.error("Error creando reserva de cumpleaños", { slotId });
-        // Manejar errores específicos de Prisma
+        console.error("Error creando reserva de cumpleaños:", err);
+        // Manejar errores específicos de Prisma y errores de validación
+        if (err.message) {
+            if (err.message.includes("Slot no encontrado") || err.message.includes("ya está reservado") || 
+                err.message.includes("no está disponible") || err.message.includes("fechas pasadas") ||
+                err.message.includes("horarios pasados")) {
+                return res.status(400).json({ error: err.message });
+            }
+        }
         if (err.code === 'P2002') {
             return res.status(400).json({ error: "Este slot ya está reservado." });
         }
@@ -165,10 +174,10 @@ router.get("/getBirthdayBooking/:id", authenticateUser, async (req: any, res) =>
             return res.status(404).json({ error: "Reserva no encontrada" });
         }
 
-        res.json(sanitizeResponse(booking));
+        res.json(booking);
     } catch (err) {
-        secureLogger.error("Error obteniendo reserva de cumpleaños", { bookingId });
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error en GET /bookings/:id:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -179,7 +188,7 @@ router.get("/getBirthdayBooking/by-date/:date", authenticateUser, async (req: an
     }
 
     const { date } = req.params; // "YYYY-MM-DD"
-    
+
     // ✅ Validar formato de fecha
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         return res.status(400).json({ error: "Formato de fecha inválido. Use YYYY-MM-DD." });
@@ -211,10 +220,10 @@ router.get("/getBirthdayBooking/by-date/:date", authenticateUser, async (req: an
             include: { slot: true }
         });
 
-        res.json(sanitizeResponse(bookings));
+        res.json(bookings);
     } catch (err) {
-        secureLogger.error("Error obteniendo reservas por fecha", { date });
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error en GET /bookings/by-date/:date:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -232,7 +241,7 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
         return res.status(400).json({ error: "ID de reserva inválido." });
     }
 
-    const { guest, number_of_kids, phone, pack, comments, status, slotId } = req.body;
+    const { guest, number_of_kids, phone, comments, status, slotId } = req.body;
 
     // ✅ Validaciones de datos
     if (number_of_kids !== undefined && (isNaN(Number(number_of_kids)) || number_of_kids <= 0)) {
@@ -240,14 +249,18 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
     }
 
     try {
-        // Verificar que la reserva existe
+        // Verificar que la reserva existe y obtener el slot actual
         const existingBooking = await prisma.birthdayBooking.findUnique({
-            where: { id: bookingId }
+            where: { id: bookingId },
+            include: { slot: true }
         });
 
         if (!existingBooking) {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
+
+        const previousSlotId = existingBooking.slotId;
+        const previousStatus = existingBooking.status;
 
         // Validar slot si se quiere cambiar
         if (slotId) {
@@ -260,28 +273,76 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
                 include: { booking: true }
             });
             if (!slot) return res.status(404).json({ error: "Slot no encontrado" });
-            if (slot.booking && slot.booking.id !== bookingId) {
+            
+            // Permitir slots con reservas canceladas o sin reserva
+            if (slot.booking && slot.booking.id !== bookingId && slot.booking.status !== 'CANCELLED') {
                 return res.status(400).json({ error: "Este slot ya está reservado" });
             }
-            if (slot.status !== "OPEN") return res.status(400).json({ error: "Este slot no está disponible" });
+            
+            // Permitir slots OPEN o slots que ya pertenecen a esta reserva
+            if (slot.status !== "OPEN" && slot.id !== previousSlotId) {
+                // Si el slot tiene una reserva cancelada, permitir reutilizarlo
+                if (!slot.booking || slot.booking.status !== 'CANCELLED') {
+                    return res.status(400).json({ error: "Este slot no está disponible" });
+                }
+            }
         }
 
-        const updatedBooking = await prisma.birthdayBooking.update({
-            where: { id: bookingId },
-            data: {
-                guest,
-                number_of_kids,
-                contact_number: phone,
-                comments,
-                packageType: pack,
-                status,
-                ...(slotId && { slot: { connect: { id: slotId } } }) // solo si cambias slot
+        // Usar transacción para asegurar atomicidad
+        const updatedBooking = await prisma.$transaction(async (tx) => {
+            // Si la reserva se cancela, liberar el slot y desconectarlo (preservar historial)
+            if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && previousSlotId) {
+                await tx.birthdaySlot.update({
+                    where: { id: previousSlotId },
+                    data: { status: 'OPEN' }
+                });
+
+                // Desconectar el slot de la reserva cancelada (preservar historial)
+                await tx.birthdayBooking.update({
+                    where: { id: bookingId },
+                    data: {
+                        slotId: null  // Desconectar pero mantener la reserva
+                    }
+                });
             }
+
+            // Si se cambió el slot, liberar el slot anterior
+            if (slotId && previousSlotId && Number(slotId) !== previousSlotId) {
+                // Liberar el slot anterior (volver a OPEN)
+                await tx.birthdaySlot.update({
+                    where: { id: previousSlotId },
+                    data: { status: 'OPEN' }
+                });
+
+                // Cerrar el nuevo slot
+                await tx.birthdaySlot.update({
+                    where: { id: Number(slotId) },
+                    data: { status: 'CLOSED' }
+                });
+            }
+
+            // Actualizar la reserva
+            const booking = await tx.birthdayBooking.update({
+                where: { id: bookingId },
+                data: {
+                    guest,
+                    number_of_kids,
+                    contact_number: phone,
+                    comments,
+                    status,
+                    ...(slotId && { slot: { connect: { id: slotId } } }) // solo si cambias slot
+                },
+                include: {
+                    slot: true
+                }
+            });
+
+            return booking;
         });
 
-        res.json(sanitizeResponse(updatedBooking));
+        res.json(updatedBooking);
     } catch (err: any) {
-        secureLogger.error("Error actualizando reserva de cumpleaños", { bookingId });
+        console.error("Error actualizando reserva de cumpleaños:", err);
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
@@ -326,6 +387,7 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
         }
 
         const previousStatus = existingBooking.status;
+        const previousSlotId = existingBooking.slotId;
 
         // Validar slot si se quiere cambiar
         if (slotId) {
@@ -338,21 +400,60 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
                 include: { booking: true }
             });
             if (!slot) return res.status(404).json({ error: "Slot no encontrado" });
-            if (slot.booking && slot.booking.id !== bookingId) {
+            
+            // Permitir slots con reservas canceladas o sin reserva
+            if (slot.booking && slot.booking.id !== bookingId && slot.booking.status !== 'CANCELLED') {
                 return res.status(400).json({ error: "Este slot ya está reservado" });
             }
-            if (slot.status !== "OPEN") return res.status(400).json({ error: "Este slot no está disponible" });
+            
+            // Permitir slots OPEN o slots con reservas canceladas
+            if (slot.status !== "OPEN" && (!slot.booking || slot.booking.status !== 'CANCELLED')) {
+                return res.status(400).json({ error: "Este slot no está disponible" });
+            }
         }
 
-        const updatedBooking = await prisma.birthdayBooking.update({
-            where: { id: bookingId },
-            data: {
-                status,
-                ...(slotId && { slot: { connect: { id: slotId } } }) // solo si cambias slot
-            },
-            include: {
-                slot: true
+        const updatedBooking = await prisma.$transaction(async (tx) => {
+            // Si la reserva se cancela, liberar el slot y desconectarlo (preservar historial)
+            if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && previousSlotId) {
+                await tx.birthdaySlot.update({
+                    where: { id: previousSlotId },
+                    data: { status: 'OPEN' }
+                });
+
+                // Desconectar el slot de la reserva cancelada (preservar historial)
+                await tx.birthdayBooking.update({
+                    where: { id: bookingId },
+                    data: {
+                        slotId: null  // Desconectar pero mantener la reserva
+                    }
+                });
             }
+
+            // Si se cambió el slot, liberar el slot anterior y cerrar el nuevo
+            if (slotId && previousSlotId && Number(slotId) !== previousSlotId) {
+                await tx.birthdaySlot.update({
+                    where: { id: previousSlotId },
+                    data: { status: 'OPEN' }
+                });
+
+                await tx.birthdaySlot.update({
+                    where: { id: Number(slotId) },
+                    data: { status: 'CLOSED' }
+                });
+            }
+
+            const booking = await tx.birthdayBooking.update({
+                where: { id: bookingId },
+                data: {
+                    status,
+                    ...(slotId && { slot: { connect: { id: slotId } } }) // solo si cambias slot
+                },
+                include: {
+                    slot: true
+                }
+            });
+
+            return booking;
         });
 
         // Enviar email según el cambio de estado
@@ -364,17 +465,16 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
                         date: updatedBooking.slot.date,
                         startTime: updatedBooking.slot.startTime,
                         endTime: updatedBooking.slot.endTime,
-                        packageType: updatedBooking.packageType,
                         number_of_kids: updatedBooking.number_of_kids,
                         contact_number: updatedBooking.contact_number
                     });
-                    
+
                     await sendTemplatedEmail(
                         existingBooking.guestEmail,
-                        "¡Tu reserva de cumpleaños ha sido confirmada! 🎉",
+                        "¡Tu reserva de cumpleaños ha sido confirmada!",
                         emailData
                     );
-                    secureLogger.info("Email de confirmación enviado", { guestEmail: existingBooking.guestEmail });
+                    console.log(`✅ Email de confirmación enviado a ${existingBooking.guestEmail}`);
                 } else if (status === 'CANCELLED') {
                     const emailData = getBirthdayBookingCancelledEmail(existingBooking.guest, {
                         id: updatedBooking.id,
@@ -382,23 +482,23 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
                         startTime: updatedBooking.slot.startTime,
                         endTime: updatedBooking.slot.endTime
                     });
-                    
+
                     await sendTemplatedEmail(
                         existingBooking.guestEmail,
                         "Reserva de cumpleaños cancelada - Somriures & Colors",
                         emailData
                     );
-                    secureLogger.info("Email de cancelación enviado", { guestEmail: existingBooking.guestEmail });
+                    console.log(`✅ Email de cancelación enviado a ${existingBooking.guestEmail}`);
                 }
             } catch (emailError) {
-                secureLogger.error("Error enviando email de cambio de estado", { guestEmail: existingBooking.guestEmail });
+                console.error("Error enviando email de cambio de estado:", emailError);
                 // No fallar la actualización si falla el email
             }
         }
 
-        res.json(sanitizeResponse(updatedBooking));
+        res.json(updatedBooking);
     } catch (err: any) {
-        secureLogger.error("Error actualizando estado de reserva", { bookingId });
+        console.error("Error actualizando estado de reserva:", err);
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
@@ -448,7 +548,7 @@ router.delete("/deleteBirthdayBooking/:id", authenticateUser, async (req: any, r
 
         res.json({ message: "Reserva eliminada correctamente" });
     } catch (err: any) {
-        secureLogger.error("Error eliminando reserva de cumpleaños", { bookingId });
+        console.error("Error eliminando reserva de cumpleaños:", err);
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
@@ -465,10 +565,10 @@ router.get("/getBirthdayBookings", authenticateUser, async (req: any, res) => {
         const birthdayBookings = await prisma.birthdayBooking.findMany({
             include: { slot: true }
         });
-        res.json(sanitizeResponse(birthdayBookings));
+        res.json(birthdayBookings);
     } catch (err) {
-        secureLogger.error("Error obteniendo reservas de cumpleaños");
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error en GET /bookings:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -480,10 +580,10 @@ router.get('/my', authenticateUser, async (req: any, res) => {
         const bookings = await prisma.daycareBooking.findMany({
             where: { userId: user_id },
         });
-        res.json(sanitizeResponse(bookings));
+        res.json(bookings);
     } catch (err) {
-        secureLogger.error("Error obteniendo reservas del usuario", { userId: req.user.id });
-        res.status(500).json({ error: 'Error interno del servidor' });
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

@@ -3,7 +3,7 @@ import express from "express";
 import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import { endOfDay, format, parse, startOfDay } from "date-fns";
 import { validateSlotConflict } from "../utils/validateSlot";
-import { secureLogger } from "../utils/logger";
+import { getFutureSlotsFilter } from "../utils/slotFilters";
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -20,6 +20,27 @@ router.post("/", authenticateUser, async (req: any, res) => {
     const dateDay = new Date(date);
     const start = new Date(startTime);
     const end = new Date(endTime);
+
+    // ✅ Validar que las fechas sean válidas
+    if (isNaN(dateDay.getTime()) || isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({ error: "Fechas inválidas. Por favor, verifica las fechas proporcionadas." });
+    }
+
+    // ✅ Validar que la fecha no sea anterior a hoy
+    const now = new Date();
+    const dateDayOnly = new Date(dateDay);
+    dateDayOnly.setHours(0, 0, 0, 0);
+    const nowDateOnly = new Date(now);
+    nowDateOnly.setHours(0, 0, 0, 0);
+
+    if (dateDayOnly < nowDateOnly) {
+        return res.status(400).json({ error: "No se pueden crear slots con fechas pasadas." });
+    }
+
+    // ✅ Si es hoy, validar que la hora de inicio no sea pasada
+    if (dateDayOnly.getTime() === nowDateOnly.getTime() && start < now) {
+        return res.status(400).json({ error: "No se pueden crear slots con horarios pasados." });
+    }
 
     try {
         await validateSlotConflict({ date: dateDay, start, end });
@@ -38,8 +59,8 @@ router.post("/", authenticateUser, async (req: any, res) => {
         if (err.message?.startsWith("Ya existe") || err.message?.startsWith("El slot") || err.message?.includes("hora de fin")) {
             return res.status(400).json({ error: err.message });
         }
-        secureLogger.error("Error creando slot", { adminId: req.user.id });
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error creando slot:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -49,28 +70,12 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
     try {
         const isAdmin = req.user?.role === "ADMIN";
         const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
 
         const whereClause: any = {};
         
         // ✅ Filtrar slots pasados solo para usuarios finales o no autenticados (no admin)
         if (!isAdmin) {
-            whereClause.OR = [
-                {
-                    startTime: { gt: now } // Slots futuros
-                },
-                {
-                    AND: [
-                        { 
-                            startTime: {
-                                gte: todayStart,
-                                lt: new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)
-                            }
-                        }, // Hoy
-                        { startTime: { gte: now } } // Pero con hora no pasada
-                    ]
-                }
-            ];
+            whereClause.AND = [getFutureSlotsFilter(now)];
         }
 
         const slots = await prisma.birthdaySlot.findMany({
@@ -79,53 +84,35 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
         });
         res.json(slots);
     } catch (err) {
-        secureLogger.error("Error listando slots de cumpleaños");
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error listando slots:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
 // ✅ Listar todos los slots disponibles
-// Filtra slots pasados (endpoint público)
+// Filtra slots pasados y solo muestra slots OPEN sin reservas activas (endpoint público)
 router.get("/availableSlots", async (req: any, res) => {
     try {
         const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
 
-        // ✅ Siempre filtrar slots pasados (endpoint público)
+        // ✅ Solo slots OPEN y sin reservas activas
         const whereClause: any = {
+            status: 'OPEN',
             OR: [
-                { status: 'OPEN' },
-                { status: 'CLOSED' }
+                { booking: null }, // Sin reserva
+                { booking: { status: 'CANCELLED' } } // O con reserva cancelada
             ],
-            AND: [
-                {
-                    OR: [
-                        {
-                            startTime: { gt: now } // Slots futuros
-                        },
-                        {
-                            AND: [
-                                { 
-                                    startTime: {
-                                        gte: todayStart,
-                                        lt: new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)
-                                    }
-                                }, // Hoy
-                                { startTime: { gte: now } } // Pero con hora no pasada
-                            ]
-                        }
-                    ]
-                }
-            ]
+            AND: [getFutureSlotsFilter(now)]
         };
 
         const slots = await prisma.birthdaySlot.findMany({
             where: whereClause,
+            include: { booking: true }
         });
         res.json(slots);
     } catch (err) {
-        secureLogger.error("Error listando slots disponibles de cumpleaños");
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error listando slots disponibles:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -146,7 +133,6 @@ router.get("/getSlotsByDay/:date", authenticateUser, async (req: any, res) => {
     try {
         const isAdmin = req.user?.role === "ADMIN";
         const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
 
         const whereClause: any = {
             startTime: {
@@ -157,26 +143,7 @@ router.get("/getSlotsByDay/:date", authenticateUser, async (req: any, res) => {
 
         // ✅ Filtrar slots pasados solo para usuarios finales (no admin)
         if (!isAdmin) {
-            whereClause.AND = [
-                {
-                    OR: [
-                        {
-                            startTime: { gt: now } // Slots futuros
-                        },
-                        {
-                            AND: [
-                                { 
-                                    startTime: {
-                                        gte: todayStart,
-                                        lt: new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)
-                                    }
-                                }, // Hoy
-                                { startTime: { gte: now } } // Pero con hora no pasada
-                            ]
-                        }
-                    ]
-                }
-            ];
+            whereClause.AND = [getFutureSlotsFilter(now)];
         }
 
         // 2️⃣ Buscar slots que caigan dentro de ese día
@@ -188,8 +155,8 @@ router.get("/getSlotsByDay/:date", authenticateUser, async (req: any, res) => {
 
         res.json(slots);
     } catch (err) {
-        secureLogger.error("Error obteniendo slots por día", { date, adminId: req.user.id });
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error obteniendo slots:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -235,6 +202,22 @@ router.put("/:id", authenticateUser, async (req: any, res) => {
         return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
     }
 
+    // ✅ Validar que la fecha no sea anterior a hoy
+    const now = new Date();
+    const dateDayOnly = new Date(dateDay);
+    dateDayOnly.setHours(0, 0, 0, 0);
+    const nowDateOnly = new Date(now);
+    nowDateOnly.setHours(0, 0, 0, 0);
+
+    if (dateDayOnly < nowDateOnly) {
+        return res.status(400).json({ error: "No se pueden actualizar slots a fechas pasadas." });
+    }
+
+    // ✅ Si es hoy, validar que la hora de inicio no sea pasada
+    if (dateDayOnly.getTime() === nowDateOnly.getTime() && start < now) {
+        return res.status(400).json({ error: "No se pueden actualizar slots a horarios pasados." });
+    }
+
     // 5️⃣ Actualizar
     try {
         await validateSlotConflict({ id: slotId, date: dateDay, start, end });
@@ -253,8 +236,8 @@ router.put("/:id", authenticateUser, async (req: any, res) => {
         if (err.message?.startsWith("Ya existe") || err.message?.startsWith("El slot") || err.message?.includes("hora de fin")) {
             return res.status(400).json({ error: err.message });
         }
-        secureLogger.error("Error actualizando slot de cumpleaños", { slotId: Number(req.params.id), adminId: req.user.id });
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error actualizando slot:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -293,7 +276,7 @@ router.delete("/:id", authenticateUser, async (req: any, res) => {
         });
         res.json({ message: "Slot eliminado correctamente" });
     } catch (err: any) {
-        secureLogger.error("Error eliminando slot de cumpleaños", { slotId: Number(id), adminId: req.user.id });
+        console.error("Error eliminando slot:", err);
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Slot no encontrado." });
         }

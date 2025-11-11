@@ -21,7 +21,20 @@ export class UpdatePackageDTO {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  features?: string[];
+  featuresEs?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  featuresVa?: string[];
+
+  @IsOptional()
+  @IsString()
+  perChildTextEs?: string;
+
+  @IsOptional()
+  @IsString()
+  perChildTextVa?: string;
 
   @IsOptional()
   @IsBoolean()

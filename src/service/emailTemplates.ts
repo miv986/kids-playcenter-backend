@@ -14,17 +14,18 @@ export function getEmailTemplate(data: EmailTemplateData): string {
     const companyName = process.env.COMPANY_NAME || "Somriures & Colors";
     const companyTagline = process.env.COMPANY_TAGLINE || "Diversión y aprendizaje";
     const companyEmail = process.env.COMPANY_EMAIL;
-    const companyPhone = process.env.COMPANY_PHONE;
     const websiteUrl = process.env.WEBSITE_URL;
+    const instagramUrl = process.env.INSTAGRAM_URL;
+    const whatsappUrl = process.env.WHATSAPP_URL;
 
     // Construir sección de detalles si existe
     const detailsSection = data.details && data.details.length > 0 ? `
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; margin: 25px 0;">
-            <h3 style="margin-top: 0; color: white; font-size: 18px;">Detalles</h3>
-            <div style="background-color: rgba(255,255,255,0.1); padding: 15px; border-radius: 6px; margin-top: 15px;">
+        <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; margin: 25px 0;">
+            <h3 style="margin-top: 0; color: #1f2937; font-size: 18px; font-weight: 600;">Detalles</h3>
+            <div style="background-color: #ffffff; padding: 15px; border-radius: 6px; margin-top: 15px; border: 1px solid #e5e7eb;">
                 ${data.details.map(detail => `
-                    <p style="margin: 8px 0; font-size: 14px;">
-                        <strong>${detail.label}:</strong> ${detail.value}
+                    <p style="margin: 10px 0; font-size: 14px; color: #374151; line-height: 1.6;">
+                        <strong style="color: #1f2937;">${detail.label}:</strong> <span style="color: #6b7280;">${detail.value}</span>
                     </p>
                 `).join('')}
             </div>
@@ -90,9 +91,40 @@ export function getEmailTemplate(data: EmailTemplateData): string {
                                         <p style="color: #6b7280; font-size: 14px; margin: 0 0 10px 0;">
                                             <strong>${companyName}</strong>
                                         </p>
-                                        ${companyEmail ? `<p style="color: #9ca3af; font-size: 12px; margin: 5px 0;">📧 ${companyEmail}</p>` : ''}
-                                        ${companyPhone ? `<p style="color: #9ca3af; font-size: 12px; margin: 5px 0;">📞 ${companyPhone}</p>` : ''}
-                                        ${websiteUrl ? `<p style="color: #9ca3af; font-size: 12px; margin: 5px 0;">🌐 <a href="${websiteUrl}" style="color: #2563eb; text-decoration: none;">${websiteUrl}</a></p>` : ''}
+                                        ${companyEmail ? `<p style="color: #9ca3af; font-size: 12px; margin: 5px 0;">Email: <a href="mailto:${companyEmail}" style="color: #2563eb; text-decoration: none;">${companyEmail}</a></p>` : ''}
+                                        ${websiteUrl ? `<p style="color: #9ca3af; font-size: 12px; margin: 5px 0;">Web: <a href="${websiteUrl}" style="color: #2563eb; text-decoration: none;">${websiteUrl}</a></p>` : ''}
+                                        ${(instagramUrl || whatsappUrl) ? `
+                                        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                                            ${instagramUrl ? `
+                                            <div style="margin-bottom: 20px;">
+                                                <p style="color: #9ca3af; font-size: 12px; margin: 0 0 8px 0; text-align: center;">Síguenos en:</p>
+                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                                                    <tr>
+                                                        <td style="text-align: center;">
+                                                            <a href="${instagramUrl}" target="_blank" style="display: inline-block; text-decoration: none; background-color: #E4405F; padding: 10px; border-radius: 50%; width: 40px; height: 40px; box-sizing: border-box;">
+                                                                <img src="https://cdn.simpleicons.org/instagram/ffffff" alt="Instagram" width="20" height="20" style="display: block; margin: 0 auto; width: 20px; height: 20px;" />
+                                                            </a>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                            ` : ''}
+                                            ${whatsappUrl ? `
+                                            <div style="margin-top: ${instagramUrl ? '20' : '0'}px; padding-top: ${instagramUrl ? '20' : '0'}px; border-top: ${instagramUrl ? '1px solid #e5e7eb' : 'none'};">
+                                                <p style="color: #9ca3af; font-size: 12px; margin: 0 0 8px 0; text-align: center;">Contacta con nosotros para cualquier duda:</p>
+                                                <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                                                    <tr>
+                                                        <td style="text-align: center;">
+                                                            <a href="${whatsappUrl}" target="_blank" style="display: inline-block; text-decoration: none; background-color: #25D366; padding: 10px; border-radius: 50%; width: 40px; height: 40px; box-sizing: border-box;">
+                                                                <img src="https://cdn.simpleicons.org/whatsapp/ffffff" alt="WhatsApp" width="20" height="20" style="display: block; margin: 0 auto; width: 20px; height: 20px;" />
+                                                            </a>
+                                                        </td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                            ` : ''}
+                                        </div>
+                                        ` : ''}
                                     </td>
                                 </tr>
                                 <tr>
@@ -149,7 +181,7 @@ export function getBirthdayBookingCreatedEmail(
         date: Date;
         startTime: Date;
         endTime: Date;
-        packageType: string;
+        packageType?: string;
         number_of_kids: number;
         contact_number: string;
     }
@@ -160,6 +192,18 @@ export function getBirthdayBookingCreatedEmail(
         'ESPECIAL': 'Pack Especial'
     };
 
+    const details = [
+        { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
+        { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+        { label: "Número de niños", value: booking.number_of_kids.toString() },
+        { label: "Teléfono de contacto", value: booking.contact_number },
+        { label: "Estado", value: "Pendiente de confirmación" }
+    ];
+
+    if (booking.packageType) {
+        details.splice(2, 0, { label: "Pack", value: packageNames[booking.packageType] || booking.packageType });
+    }
+
     return {
         title: "Reserva de cumpleaños recibida",
         greeting: `Hola ${guestName}`,
@@ -167,14 +211,7 @@ export function getBirthdayBookingCreatedEmail(
             <p>¡Gracias por tu reserva! Hemos recibido tu solicitud de reserva para la fiesta de cumpleaños.</p>
             <p><strong>Tu reserva está pendiente de confirmación.</strong> Te notificaremos por email una vez que nuestro equipo la haya revisado y confirmado.</p>
         `,
-        details: [
-            { label: "📅 Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "🕐 Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
-            { label: "🎁 Pack", value: packageNames[booking.packageType] || booking.packageType },
-            { label: "👶 Número de niños", value: booking.number_of_kids.toString() },
-            { label: "📞 Teléfono de contacto", value: booking.contact_number },
-            { label: "📋 Estado", value: "Pendiente de confirmación" }
-        ],
+        details,
         footerMessage: "Recibirás un email de confirmación una vez que tu reserva sea aprobada por nuestro equipo."
     };
 }
@@ -189,7 +226,7 @@ export function getBirthdayBookingConfirmedEmail(
         date: Date;
         startTime: Date;
         endTime: Date;
-        packageType: string;
+        packageType?: string;
         number_of_kids: number;
         contact_number: string;
     }
@@ -200,21 +237,26 @@ export function getBirthdayBookingConfirmedEmail(
         'ESPECIAL': 'Pack Especial'
     };
 
+    const details = [
+        { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
+        { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+        { label: "Número de niños", value: booking.number_of_kids.toString() },
+        { label: "Teléfono de contacto", value: booking.contact_number },
+        { label: "Estado", value: "Confirmada" }
+    ];
+
+    if (booking.packageType) {
+        details.splice(2, 0, { label: "Pack", value: packageNames[booking.packageType] || booking.packageType });
+    }
+
     return {
-        title: "¡Tu reserva de cumpleaños ha sido confirmada! 🎉",
+        title: "¡Tu reserva de cumpleaños ha sido confirmada!",
         greeting: `Hola ${guestName}`,
         content: `
             <p>¡Excelentes noticias! Tu reserva de cumpleaños ha sido <strong>confirmada</strong> por nuestro equipo.</p>
             <p>Estamos emocionados de celebrar contigo. A continuación encontrarás todos los detalles de tu reserva:</p>
         `,
-        details: [
-            { label: "📅 Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "🕐 Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
-            { label: "🎁 Pack", value: packageNames[booking.packageType] || booking.packageType },
-            { label: "👶 Número de niños", value: booking.number_of_kids.toString() },
-            { label: "📞 Teléfono de contacto", value: booking.contact_number },
-            { label: "✅ Estado", value: "Confirmada" }
-        ],
+        details,
         footerMessage: "Si tienes alguna pregunta o necesitas modificar tu reserva, no dudes en contactarnos."
     };
 }
@@ -242,10 +284,10 @@ export function getDaycareBookingConfirmedEmail(
             <p>Aquí tienes los detalles de tu reserva:</p>
         `,
         details: [
-            { label: "📅 Fecha", value: booking.startTime.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "🕐 Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
-            { label: "👶 Niños", value: childrenNames },
-            { label: "✅ Estado", value: "Confirmada" }
+            { label: "Fecha", value: booking.startTime.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
+            { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Niños", value: childrenNames },
+            { label: "Estado", value: "Confirmada" }
         ],
         footerMessage: "¡Esperamos verte pronto! Si necesitas modificar o cancelar tu reserva, puedes hacerlo desde tu panel de usuario."
     };
@@ -304,10 +346,10 @@ export function getDaycareBookingStatusChangedEmail(
             <p>Detalles de la reserva:</p>
         `,
         details: [
-            { label: "📅 Fecha", value: booking.startTime.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "🕐 Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
-            { label: "👶 Niños", value: childrenNames },
-            { label: "📋 Estado", value: booking.status }
+            { label: "Fecha", value: booking.startTime.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
+            { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Niños", value: childrenNames },
+            { label: "Estado", value: booking.status }
         ],
         footerMessage: booking.status === 'CANCELLED' 
             ? "Si cancelaste esta reserva por error, puedes crear una nueva desde tu panel de usuario."
@@ -335,9 +377,9 @@ export function getBirthdayBookingCancelledEmail(
             <p>Detalles de la reserva cancelada:</p>
         `,
         details: [
-            { label: "📅 Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "🕐 Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
-            { label: "📋 Estado", value: "Cancelada" }
+            { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
+            { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Estado", value: "Cancelada" }
         ],
         footerMessage: "Si necesitas hacer una nueva reserva, puedes hacerlo desde nuestro sitio web."
     };

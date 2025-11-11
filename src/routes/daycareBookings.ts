@@ -6,8 +6,6 @@ import { CreateDaycareBookingDTO } from "../dtos/CreateDaycareBookingDTO";
 import { UpdateDaycareBookingDTO } from "../dtos/UpdateDaycareBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } from "../service/emailTemplates";
-import { secureLogger } from "../utils/logger";
-import { sanitizeResponse } from "../utils/sanitize";
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -174,19 +172,19 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
                     "Reserva de ludoteca confirmada - Somriures & Colors",
                     emailData
                 );
-                secureLogger.info("Email de confirmación de reserva enviado", { userEmail: booking.user.email });
+                console.log(`✅ Email de confirmación de reserva enviado a ${booking.user.email}`);
             } catch (emailError) {
-                secureLogger.error("Error enviando email de confirmación", { userEmail: booking.user.email });
+                console.error("Error enviando email de confirmación:", emailError);
                 // No fallar la creación si falla el email
             }
         }
 
         return res.status(201).json({
             message: "✅ Reserva creada correctamente.",
-            booking: sanitizeResponse(booking),
+            booking: booking,
         });
     } catch (err: any) {
-        secureLogger.error("Error al crear reserva", { userId: req.user.id });
+        console.error("Error al crear reserva:", err);
         // Manejar errores específicos de Prisma
         if (err.code === 'P2002') {
             return res.status(400).json({ error: "Ya existe una reserva con estos datos." });
@@ -216,10 +214,10 @@ router.get("/", authenticateUser, async (req: any, res) => {
             orderBy: { startTime: "asc" },
         });
 
-        res.json(sanitizeResponse(bookings));
+        res.json(bookings);
     } catch (err) {
-        secureLogger.error("Error al listar reservas", { userId: req.user.id });
-        res.status(500).json({ error: "Error interno del servidor" });
+        console.error("Error al listar reservas:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
@@ -371,10 +369,10 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
 
         return res.json({
             message: "✅ Reserva modificada correctamente.",
-            booking: sanitizeResponse(updatedBooking),
+            booking: updatedBooking,
         });
     } catch (err: any) {
-        secureLogger.error("Error al modificar reserva", { bookingId: Number(req.params.id), userId: req.user.id });
+        console.error("Error al modificar reserva:", err);
         // Manejar errores específicos de Prisma
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva o recursos relacionados no encontrados." });
@@ -466,16 +464,16 @@ router.put("/:id/cancel", authenticateUser, async (req: any, res: any) => {
                     "Reserva de ludoteca cancelada - Somriures & Colors",
                     emailData
                 );
-                secureLogger.info("Email de cancelación enviado", { userEmail: existingBooking.user.email });
+                console.log(`✅ Email de cancelación enviado a ${existingBooking.user.email}`);
             } catch (emailError) {
-                secureLogger.error("Error enviando email de cancelación", { userEmail: existingBooking.user.email });
+                console.error("Error enviando email de cancelación:", emailError);
                 // No fallar la cancelación si falla el email
             }
         }
         
         return res.json({ message: "✅ Reserva cancelada correctamente" });
     } catch (err: any) {
-        secureLogger.error("Error al cancelar reserva", { bookingId: Number(req.params.id), userId: req.user.id });
+        console.error("Error al cancelar reserva:", err);
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
@@ -525,10 +523,10 @@ router.put("/:id/attendance", authenticateUser, async (req: any, res: any) => {
 
         return res.json({
             message: `✅ Asistencia marcada como ${attendanceStatus === 'ATTENDED' ? 'asistió' : attendanceStatus === 'NOT_ATTENDED' ? 'no asistió' : 'pendiente'}.`,
-            booking: sanitizeResponse(updatedBooking),
+            booking: updatedBooking,
         });
     } catch (err: any) {
-        secureLogger.error("Error al marcar asistencia", { bookingId: Number(req.params.id), adminId: req.user.id });
+        console.error("Error al marcar asistencia:", err);
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
@@ -581,7 +579,7 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
 
         res.json({ message: "✅ Reserva eliminada correctamente y plazas liberadas." });
     } catch (err: any) {
-        secureLogger.error("Error al eliminar reserva", { bookingId: Number(req.params.id), adminId: req.user.id });
+        console.error("Error al eliminar reserva:", err);
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
@@ -612,7 +610,7 @@ router.post("/close-past-bookings", authenticateUser, async (req: any, res: any)
             notified: result.notified
         });
     } catch (err: any) {
-        secureLogger.error("Error cerrando reservas pasadas", { adminId: req.user.id });
+        console.error("Error cerrando reservas pasadas:", err);
         return res.status(500).json({ error: "Error interno del servidor." });
     }
 });
@@ -637,7 +635,7 @@ router.post("/close-past-bookings-auto", async (req: any, res: any) => {
             notified: result.notified
         });
     } catch (err: any) {
-        secureLogger.error("Error cerrando reservas pasadas (auto)", { ip: req.ip });
+        console.error("Error cerrando reservas pasadas:", err);
         return res.status(500).json({ error: "Error interno del servidor." });
     }
 });

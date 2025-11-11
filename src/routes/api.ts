@@ -4,8 +4,6 @@ import { authenticateUser } from "../middleware/auth";
 import { CreateChildDTO } from "../dtos/CreateChildDTO";
 import { validateDTO } from "../middleware/validation";
 import { CreateChildNoteDTO } from "../dtos/CreateChildNoteDTO";
-import { secureLogger } from "../utils/logger";
-import { sanitizeResponse } from "../utils/sanitize";
 const prisma = new PrismaClient();
 
 const router = express.Router();
@@ -62,10 +60,9 @@ router.post('/addChild', authenticateUser, validateDTO(CreateChildDTO), async (r
 
       } as Prisma.UserUncheckedCreateInput
     });
-    res.status(201).json(sanitizeResponse(child));
+    res.status(201).json(child);
   } catch (error) {
-    secureLogger.error("Error creando hijo", { tutorId: req.user.id });
-    res.status(500).json({ error: "Error interno del servidor" });
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -98,10 +95,10 @@ router.get("/children", authenticateUser, async (req: any, res) => {
       },
     });
 
-    return res.status(200).json({ children: sanitizeResponse(children) });
+    return res.status(200).json({ children });
   } catch (error) {
-    secureLogger.error("Error obteniendo hijos", { tutorId: req.user.id });
-    return res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    return res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -143,10 +140,9 @@ router.put("/updateChild/:childId", authenticateUser, async (req: any, res) => {
 
       }
     });
-    res.status(200).json(sanitizeResponse(updateChild));
+    res.status(200).json(updateChild);
   } catch (error) {
-    secureLogger.error("Error actualizando hijo", { tutorId: req.user.id, childId: child_id });
-    res.status(500).json({ error: "Error interno del servidor" });
+    res.status(500).json({ error: (error as Error).message });
   }
 
 });
@@ -182,8 +178,8 @@ router.delete("/deleteChild/:childId", authenticateUser, async (req: any, res) =
 
     return res.status(200).json({ message: "Child eliminado correctamente" });
   } catch (error) {
-    secureLogger.error("Error eliminando hijo", { adminId: req.user.id, childId: child_id });
-    return res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    return res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -262,14 +258,14 @@ router.get("/admin/tutors", authenticateUser, async (req: any, res) => {
     ]);
 
     res.status(200).json({
-      tutors: sanitizeResponse(tutors),
+      tutors,
       total,
       page: pageNum,
       totalPages: Math.ceil(total / limitNum)
     });
   } catch (error) {
-    secureLogger.error("Error obteniendo tutores", { adminId: req.user.id });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -312,10 +308,10 @@ router.get("/admin/tutor/:tutorId", authenticateUser, async (req: any, res) => {
       return res.status(404).json({ error: "Tutor no encontrado" });
     }
 
-    res.status(200).json(sanitizeResponse(tutorWithChildren));
+    res.status(200).json(tutorWithChildren);
   } catch (error) {
-    secureLogger.error("Error obteniendo tutor", { adminId: req.user.id, tutorId });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 //
@@ -351,10 +347,10 @@ router.put("/admin/tutor/child/:childId", authenticateUser, async (req: any, res
       }
     });
 
-    res.status(200).json(sanitizeResponse(updatedChild));
+    res.status(200).json(updatedChild);
   } catch (error) {
-    secureLogger.error("Error actualizando notas de hijo", { adminId: req.user.id, childId });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -406,10 +402,10 @@ router.post("/childNote", authenticateUser, validateDTO(CreateChildNoteDTO), asy
       }
     });
 
-    res.status(201).json(sanitizeResponse(note));
+    res.status(201).json(note);
   } catch (error) {
-    secureLogger.error("Error creando nota de hijo", { adminId: req.user.id });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -451,13 +447,13 @@ router.get("/childNote/child/:childId", authenticateUser, async (req: any, res) 
         }
       });
 
-      return res.status(200).json(sanitizeResponse(notes));
+      return res.status(200).json(notes);
     }
 
     return res.status(403).json({ error: "No autorizado" });
   } catch (error) {
-    secureLogger.error("Error obteniendo notas de hijo", { userId: req.user.id, childId });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -503,10 +499,10 @@ router.put("/childNote/:noteId/read", authenticateUser, async (req: any, res) =>
       }
     });
 
-    res.status(200).json(sanitizeResponse(updatedNote));
+    res.status(200).json(updatedNote);
   } catch (error) {
-    secureLogger.error("Error marcando nota como leída", { userId: req.user.id, noteId });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -557,10 +553,10 @@ router.put("/childNote/:noteId", authenticateUser, async (req: any, res) => {
       }
     });
 
-    res.status(200).json(sanitizeResponse(updatedNote));
+    res.status(200).json(updatedNote);
   } catch (error) {
-    secureLogger.error("Error actualizando nota", { adminId: req.user.id, noteId });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 
@@ -579,8 +575,8 @@ router.delete("/childNote/:noteId", authenticateUser, async (req: any, res) => {
 
     res.status(200).json({ message: "Nota eliminada correctamente" });
   } catch (error) {
-    secureLogger.error("Error eliminando nota", { adminId: req.user.id, noteId });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error(error);
+    res.status(500).json({ error: (error as Error).message });
   }
 });
 

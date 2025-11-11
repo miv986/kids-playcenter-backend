@@ -145,11 +145,11 @@ model BirthdayBooking {
   number_of_kids   Int
   contact_number   String
   comments         String?
-  packageType      Package
+  packageType      Package?
   status           Status   @default(PENDING)
 
-  slotId           Int      @unique
-  slot             BirthdaySlot @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  slotId           Int?     @unique
+  slot             BirthdaySlot? @relation(fields: [slotId], references: [id], onDelete: Cascade)
 
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -180,7 +180,10 @@ model BirthdayPackage {
   duration      String   // "3 horas"
   price         String   // "15€"
   priceValue    Int      // 15 (para ordenar)
-  features      String[] // Array de características
+  featuresEs    String[] // Array de características en español
+  featuresVa    String[] // Array de características en valenciano
+  perChildTextEs String? // Texto "por celebración" en español
+  perChildTextVa String? // Texto "por celebración" en valenciano
   isPopular     Boolean  @default(false)
   isActive      Boolean  @default(true)
   

@@ -1,7 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import express from "express";
 import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
-import { secureLogger } from "../utils/logger";
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -17,7 +16,6 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
   }
 
   try {
-    const DAYS_TO_GENERATE = 14;
     const { startDate, openHour, closeHour, capacity } = req.body;
 
     if (!startDate || !openHour || !closeHour) {
@@ -56,57 +54,124 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
 
     const createdSlots = [];
     const errors = [];
-
-    for (let dayOffset = 0; dayOffset < DAYS_TO_GENERATE; dayOffset++) {
-      const date = new Date(baseDate);
-      date.setDate(baseDate.getDate() + dayOffset);
-
-      // 1 = lunes ... 4 = jueves
-      const weekday = date.getDay();
-      if (weekday >= 1 && weekday <= 4) {
-        for (let hour = openH; hour < closeH; hour++) {
-          try {
-            // Verificar si ya existe un slot para esta fecha y hora
-            const existingSlot = await prisma.daycareSlot.findFirst({
-              where: {
-                date: {
-                  gte: new Date(date.toDateString()),
-                  lt: new Date(new Date(date).setDate(date.getDate() + 1))
-                },
-                hour: hour,
+    let lastProcessedDate: Date | null = null;
+    
+    // Obtener el día de la semana de la fecha de inicio (0 = domingo, 1 = lunes, ..., 6 = sábado)
+    const startWeekday = baseDate.getDay();
+    
+    // Calcular el lunes de la semana de inicio
+    // Si es domingo (0), retroceder 6 días; si es lunes (1), retroceder 0 días, etc.
+    const daysToMonday = startWeekday === 0 ? -6 : 1 - startWeekday;
+    const mondayOfFirstWeek = new Date(baseDate);
+    mondayOfFirstWeek.setDate(baseDate.getDate() + daysToMonday);
+    mondayOfFirstWeek.setHours(0, 0, 0, 0);
+    
+    // Fase 1: Generar lunes a jueves de la semana de inicio
+    let currentDate = new Date(mondayOfFirstWeek);
+    for (let day = 1; day <= 4; day++) {
+      const date = new Date(currentDate);
+      lastProcessedDate = new Date(date);
+      
+      for (let hour = openH; hour < closeH; hour++) {
+        try {
+          // Verificar si ya existe un slot para esta fecha y hora
+          const existingSlot = await prisma.daycareSlot.findFirst({
+            where: {
+              date: {
+                gte: new Date(date.toDateString()),
+                lt: new Date(new Date(date).setDate(date.getDate() + 1))
               },
-            });
+              hour: hour,
+            },
+          });
 
-            if (existingSlot) {
-              errors.push(`Slot ya existe para ${date.toDateString()} a las ${hour}:00`);
-              continue; // Saltar este slot
-            }
-
-            const openDate = new Date(date);
-            openDate.setHours(hour, 0, 0, 0);
-
-            const closeDate = new Date(date);
-            closeDate.setHours(hour + 1, 0, 0, 0);
-
-            const newSlot = await prisma.daycareSlot.create({
-              data: {
-                date: new Date(date.toDateString()),
-                hour,
-                openHour: openDate,
-                closeHour: closeDate,
-                capacity,
-                availableSpots: capacity,
-                status: "OPEN",
-              },
-            });
-
-            createdSlots.push(newSlot);
-          } catch (error) {
-            secureLogger.error("Error creando slot", { date: date.toDateString(), hour });
-            errors.push(`Error creando slot para ${date.toDateString()} ${hour}:00`);
+          if (existingSlot) {
+            errors.push(`Slot ya existe para ${date.toDateString()} a las ${hour}:00`);
+            continue;
           }
+
+          const openDate = new Date(date);
+          openDate.setHours(hour, 0, 0, 0);
+
+          const closeDate = new Date(date);
+          closeDate.setHours(hour + 1, 0, 0, 0);
+
+          const newSlot = await prisma.daycareSlot.create({
+            data: {
+              date: new Date(date.toDateString()),
+              hour,
+              openHour: openDate,
+              closeHour: closeDate,
+              capacity,
+              availableSpots: capacity,
+              status: "OPEN",
+            },
+          });
+
+          createdSlots.push(newSlot);
+        } catch (error) {
+          console.error(`Error creando slot para ${date.toDateString()} ${hour}:00:`, error);
+          errors.push(`Error creando slot para ${date.toDateString()} ${hour}:00`);
         }
       }
+      
+      // Avanzar al siguiente día
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    // Fase 2: Generar lunes a jueves de la semana siguiente
+    // Avanzar al lunes de la siguiente semana (sumar 7 días desde el lunes actual)
+    currentDate.setDate(mondayOfFirstWeek.getDate() + 7);
+    
+    for (let day = 1; day <= 4; day++) {
+      const date = new Date(currentDate);
+      lastProcessedDate = new Date(date);
+      
+      for (let hour = openH; hour < closeH; hour++) {
+        try {
+          // Verificar si ya existe un slot para esta fecha y hora
+          const existingSlot = await prisma.daycareSlot.findFirst({
+            where: {
+              date: {
+                gte: new Date(date.toDateString()),
+                lt: new Date(new Date(date).setDate(date.getDate() + 1))
+              },
+              hour: hour,
+            },
+          });
+
+          if (existingSlot) {
+            errors.push(`Slot ya existe para ${date.toDateString()} a las ${hour}:00`);
+            continue;
+          }
+
+          const openDate = new Date(date);
+          openDate.setHours(hour, 0, 0, 0);
+
+          const closeDate = new Date(date);
+          closeDate.setHours(hour + 1, 0, 0, 0);
+
+          const newSlot = await prisma.daycareSlot.create({
+            data: {
+              date: new Date(date.toDateString()),
+              hour,
+              openHour: openDate,
+              closeHour: closeDate,
+              capacity,
+              availableSpots: capacity,
+              status: "OPEN",
+            },
+          });
+
+          createdSlots.push(newSlot);
+        } catch (error) {
+          console.error(`Error creando slot para ${date.toDateString()} ${hour}:00:`, error);
+          errors.push(`Error creando slot para ${date.toDateString()} ${hour}:00`);
+        }
+      }
+      
+      // Avanzar al siguiente día
+      currentDate.setDate(currentDate.getDate() + 1);
     }
 
     return res.status(201).json({
@@ -115,13 +180,13 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
       errors: errors.length > 0 ? errors : undefined,
       summary: {
         startDate: baseDate.toDateString(),
-        endDate: new Date(baseDate.getTime() + 13 * 24 * 60 * 60 * 1000).toDateString(),
+        endDate: lastProcessedDate ? lastProcessedDate.toDateString() : baseDate.toDateString(),
         totalCreated: createdSlots.length,
         totalErrors: errors.length
       }
     });
   } catch (err) {
-    secureLogger.error("Error generando slots", { adminId: req.user.id });
+    console.error("Error generando slots:", err);
     return res.status(500).json({ error: "Error generando los slots de ludoteca." });
   }
 });
@@ -223,7 +288,7 @@ router.put("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
       slot: formattedSlot,
     });
   } catch (error: any) {
-    secureLogger.error("Error al editar slot", { slotId: Number(req.params.id), adminId: req.user.id });
+    console.error("Error al editar slot:", error);
     if (error.code === 'P2025') {
       return res.status(404).json({ error: "Slot no encontrado." });
     }
@@ -295,7 +360,7 @@ router.put("/daycare-slots", authenticateUser, async (req: any, res) => {
       message: `✅ ${updated.count} slots actualizados correctamente.`,
     });
   } catch (error) {
-    secureLogger.error("Error al editar slots múltiples", { adminId: req.user.id });
+    console.error("Error al editar slots:", error);
     return res.status(500).json({ error: "Error al editar los slots." });
   }
 });
@@ -379,8 +444,8 @@ router.get("/available/date/:date", async (req, res) => {
 
     return res.json({ date, availableSlots: formatted });
   } catch (err) {
-    secureLogger.error("Error al obtener slots disponibles", { date });
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error("Error al obtener slots disponibles:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -424,8 +489,8 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
 
     res.json(formattedSlots);
   } catch (err) {
-    secureLogger.error("Error listando slots disponibles");
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error("Error listando slots disponibles:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -467,7 +532,7 @@ router.delete("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
 
     return res.json({ message: "✅ Slot eliminado correctamente." });
   } catch (error) {
-    secureLogger.error("Error al eliminar slot", { slotId: Number(req.params.id), adminId: req.user.id });
+    console.error("Error al eliminar slot:", error);
     return res.status(500).json({ error: "Error al eliminar el slot." });
   }
 });
@@ -533,7 +598,7 @@ router.delete("/daycare-slots", authenticateUser, async (req: any, res) => {
       message: `✅ ${result.count} slots eliminados correctamente.`,
     });
   } catch (error) {
-    secureLogger.error("Error al eliminar slots múltiples", { adminId: req.user.id });
+    console.error("Error al eliminar slots:", error);
     return res.status(500).json({ error: "Error al eliminar los slots." });
   }
 });
