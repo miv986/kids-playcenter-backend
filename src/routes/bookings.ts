@@ -1,11 +1,10 @@
 import express from "express";
 import { authenticateUser } from "../middleware/auth";
-import { PrismaClient } from "@prisma/client";
 import { validateDTO } from "../middleware/validation";
 import { CreateBirthdayBookingDTO } from "../dtos/CreateBirthdayBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getBirthdayBookingCreatedEmail, getBirthdayBookingConfirmedEmail, getBirthdayBookingCancelledEmail } from "../service/emailTemplates";
-const prisma = new PrismaClient();
+import prisma from "../utils/prisma";
 const router = express.Router();
 
 //
@@ -63,20 +62,18 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
                 throw new Error("Este slot no está disponible");
             }
 
-            // ✅ Validar que la fecha del slot no sea pasada
-            const now = new Date();
+            // ✅ Validar que la fecha del slot no sea pasada (usando helpers estandarizados)
+            const { getStartOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
             const slotDate = new Date(slot.startTime);
-            const slotDateOnly = new Date(slotDate);
-            slotDateOnly.setHours(0, 0, 0, 0);
-            const nowDateOnly = new Date(now);
-            nowDateOnly.setHours(0, 0, 0, 0);
+            const slotDateOnly = getStartOfDay(slotDate);
+            const nowDateOnly = getStartOfDay();
 
             if (slotDateOnly < nowDateOnly) {
                 throw new Error("No se pueden reservar slots con fechas pasadas.");
             }
 
             // Si es hoy, validar que la hora no sea pasada
-            if (slotDateOnly.getTime() === nowDateOnly.getTime() && slotDate < now) {
+            if (isToday(slotDate) && isPastDateTime(slot.startTime)) {
                 throw new Error("No se pueden reservar slots con horarios pasados.");
             }
 
@@ -201,9 +198,9 @@ router.get("/getBirthdayBooking/by-date/:date", authenticateUser, async (req: an
         return res.status(400).json({ error: "Fecha inválida." });
     }
 
-    // Crear rango en UTC
-    const startOfDay = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-    const endOfDay = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+    // Crear rango en hora local (estandarizado)
+    const { getDateRange } = await import("../utils/dateHelpers");
+    const { start: startOfDay, end: endOfDay } = getDateRange(date);
 
     // ✅ Validar que las fechas sean válidas
     if (isNaN(startOfDay.getTime()) || isNaN(endOfDay.getTime())) {

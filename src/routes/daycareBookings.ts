@@ -1,13 +1,12 @@
 import express from "express";
-import { PrismaClient } from "@prisma/client";
 import { authenticateUser } from "../middleware/auth";
 import { validateDTO } from "../middleware/validation";
 import { CreateDaycareBookingDTO } from "../dtos/CreateDaycareBookingDTO";
 import { UpdateDaycareBookingDTO } from "../dtos/UpdateDaycareBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } from "../service/emailTemplates";
+import prisma from "../utils/prisma";
 
-const prisma = new PrismaClient();
 const router = express.Router();
 
 
@@ -46,19 +45,18 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
         }
 
-        const date = new Date(start);
-        date.setHours(0, 0, 0, 0);
-
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede reservar fechas pasadas)
+        const { getStartOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+        const date = getStartOfDay(start);
+        
         if (req.user.role !== 'ADMIN') {
-            const now = new Date();
-            now.setHours(0, 0, 0, 0);
+            const now = getStartOfDay();
+            
             if (date < now) {
                 return res.status(400).json({ error: "No se pueden reservar slots con fechas pasadas." });
             }
             // Validar también que la hora de inicio no sea pasada si es hoy
-            const nowWithTime = new Date();
-            if (date.getTime() === now.getTime() && start < nowWithTime) {
+            if (isToday(start) && isPastDateTime(start)) {
                 return res.status(400).json({ error: "No se pueden reservar slots con horarios pasados." });
             }
 
@@ -272,19 +270,17 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
         }
 
-        const date = new Date(start);
-        date.setHours(0, 0, 0, 0);
-
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede modificar a fechas pasadas)
+        const { getStartOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+        const date = getStartOfDay(start);
+
         if (req.user.role !== 'ADMIN') {
-            const now = new Date();
-            now.setHours(0, 0, 0, 0);
+            const now = getStartOfDay();
             if (date < now) {
                 return res.status(400).json({ error: "No se pueden modificar reservas a fechas pasadas." });
             }
             // Validar también que la hora de inicio no sea pasada si es hoy
-            const nowWithTime = new Date();
-            if (date.getTime() === now.getTime() && start < nowWithTime) {
+            if (isToday(start) && isPastDateTime(start)) {
                 return res.status(400).json({ error: "No se pueden modificar reservas a horarios pasados." });
             }
 

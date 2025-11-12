@@ -1,10 +1,9 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import jwt, { JwtPayload } from "jsonwebtoken";
-import { PrismaClient } from "@prisma/client";
+import prisma from "../utils/prisma";
 
 const router = express.Router();
-const prisma = new PrismaClient();
 import crypto from "crypto";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getVerificationEmail } from "../service/emailTemplates";
@@ -214,8 +213,14 @@ router.post("/refresh", async (req, res) => {
   const refreshToken = req.cookies.refreshToken;
   if (!refreshToken) return res.status(401).json({ error: "Missing refresh token" });
 
+  // Verificar que el secret esté configurado
+  if (!process.env.JWT_REFRESH_SECRET) {
+    console.error("JWT_REFRESH_SECRET no está configurado");
+    return res.status(500).json({ error: "Server configuration error" });
+  }
+
   try {
-    const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!) as { userId: number };
+    const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET) as { userId: number };
 
     // Verificar en DB que el refresh token existe y no expiró
     const storedToken = await prisma.refreshToken.findUnique({ where: { token: refreshToken } });
@@ -234,8 +239,23 @@ router.post("/refresh", async (req, res) => {
     );
 
     res.json({ accessToken });
-  } catch (err) {
-    console.warn("Error en refresh token:", err);
+  } catch (err: any) {
+    if (err.name === "JsonWebTokenError") {
+      if (err.message === "invalid signature") {
+        console.error("Error en refresh token: invalid signature - El secret puede haber cambiado o el token fue firmado con un secret diferente");
+        // Si el token tiene firma inválida, puede ser que el secret cambió
+        // Eliminar el token de la DB para forzar nuevo login
+        await prisma.refreshToken.deleteMany({ where: { token: refreshToken } }).catch(() => {});
+        return res.status(401).json({ error: "Token inválido. Por favor, inicia sesión nuevamente" });
+      }
+      console.error("Error en refresh token (JWT):", err.message);
+    } else if (err.name === "TokenExpiredError") {
+      console.warn("Refresh token expirado");
+      await prisma.refreshToken.deleteMany({ where: { token: refreshToken } }).catch(() => {});
+      return res.status(401).json({ error: "Token expirado. Por favor, inicia sesión nuevamente" });
+    } else {
+      console.error("Error en refresh token:", err);
+    }
     res.status(401).json({ error: "Invalid or expired refresh token" });
   }
 });

@@ -1,8 +1,7 @@
-import { PrismaClient } from "@prisma/client";
 import express from "express";
 import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
+import prisma from "../utils/prisma";
 
-const prisma = new PrismaClient();
 const router = express.Router();
 
 
@@ -377,13 +376,13 @@ router.get("/available/date/:date", async (req, res) => {
     return res.status(400).json({ error: "Falta el parámetro 'date' (YYYY-MM-DD)" });
   }
 
-  // Convertir string de fecha a rango del día (00:00 a 23:59) - usar fecha local
-  const startOfDay = new Date(year, month - 1, day, 0, 0, 0);
-  const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+  // Convertir string de fecha a rango del día (00:00 a 23:59) - usar fecha local (estandarizado)
+  const { getDateRange, getStartOfDay } = await import("../utils/dateHelpers");
+  const { start: startOfDay, end: endOfDay } = getDateRange(date);
 
   try {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const now = getStartOfDay();
+    const todayStart = now;
 
     // Buscar slots de ese día que estén abiertos y tengan plazas
     // ✅ Siempre filtrar slots pasados (endpoint público)
@@ -449,43 +448,94 @@ router.get("/available/date/:date", async (req, res) => {
   }
 });
 
-
 // ✅ Listar todos los slots disponibles
 // Si es admin, devuelve todos. Si es usuario final o no autenticado, filtra slots pasados
+// Parámetros opcionales: startDate, endDate (YYYY-MM-DD) para filtrar por rango
+// Parámetros opcionales: availableOnly=true para filtrar solo slots OPEN con plazas > 0
 router.get("/", optionalAuthenticate, async (req: any, res) => {
   try {
     const isAdmin = req.user?.role === "ADMIN";
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const { getNow, getStartOfDay, getDateRange, getEndOfDay, parseDateString } = await import("../utils/dateHelpers");
+    const now = getNow();
+    const todayStart = getStartOfDay();
+    const { startDate, endDate, availableOnly } = req.query;
 
     const whereClause: any = {};
+    const andConditions: any[] = [];
+    
+    // Filtrar por rango de fechas si se proporciona
+    if (startDate && endDate) {
+      const { start: startOfRange } = getDateRange(startDate as string);
+      const endOfRange = getEndOfDay(parseDateString(endDate as string));
+      
+      andConditions.push({
+        date: {
+          gte: startOfRange,
+          lte: endOfRange,
+        }
+      });
+    }
+    
+    // Si availableOnly=true, filtrar solo slots OPEN con plazas disponibles
+    if (availableOnly === 'true') {
+      andConditions.push({
+        status: "OPEN",
+        availableSpots: { gt: 0 }
+      });
+    }
     
     // ✅ Filtrar slots pasados solo para usuarios finales o no autenticados (no admin)
     if (!isAdmin) {
-      whereClause.OR = [
-        {
-          date: { gt: todayStart } // Fechas futuras
-        },
-        {
-          AND: [
-            { date: todayStart }, // Hoy
-            { openHour: { gte: now } } // Pero con hora no pasada
-          ]
-        }
-      ];
+      andConditions.push({
+        OR: [
+          {
+            date: { gt: todayStart } // Fechas futuras
+          },
+          {
+            AND: [
+              { date: todayStart }, // Hoy
+              { openHour: { gte: now } } // Pero con hora no pasada
+            ]
+          }
+        ]
+      });
+    }
+    
+    // Combinar todas las condiciones
+    if (andConditions.length > 0) {
+      if (andConditions.length === 1) {
+        Object.assign(whereClause, andConditions[0]);
+      } else {
+        whereClause.AND = andConditions;
+      }
     }
 
     const slots = await prisma.daycareSlot.findMany({
       where: whereClause,
       include: { bookings: true },
+      orderBy: startDate && endDate ? [
+        { date: "asc" },
+        { openHour: "asc" }
+      ] : undefined,
     });
 
-    // Formatear las horas a "HH:mm"
-    const formattedSlots = slots.map(slot => ({
-      ...slot,
-      openHour: `${new Date(slot.openHour).getHours().toString().padStart(2, '0')}:${new Date(slot.openHour).getMinutes().toString().padStart(2, '0')}`,
-      closeHour: `${new Date(slot.closeHour).getHours().toString().padStart(2, '0')}:${new Date(slot.closeHour).getMinutes().toString().padStart(2, '0')}`,
-    }));
+    // Formatear las horas a "HH:mm" y agregar fecha formateada si es necesario
+    const formattedSlots = slots.map(slot => {
+      const slotDate = new Date(slot.date);
+      const dateStr = `${slotDate.getFullYear()}-${(slotDate.getMonth() + 1).toString().padStart(2, '0')}-${slotDate.getDate().toString().padStart(2, '0')}`;
+      
+      return {
+        ...slot,
+        date: dateStr, // Agregar fecha formateada
+        openHour: `${new Date(slot.openHour).getHours().toString().padStart(2, '0')}:${new Date(slot.openHour).getMinutes().toString().padStart(2, '0')}`,
+        closeHour: `${new Date(slot.closeHour).getHours().toString().padStart(2, '0')}:${new Date(slot.closeHour).getMinutes().toString().padStart(2, '0')}`,
+      };
+    });
+
+    // Si se solicita availableOnly con rango, devolver en formato compatible
+    if (availableOnly === 'true' && startDate && endDate) {
+      return res.json({ availableSlots: formattedSlots });
+    }
 
     res.json(formattedSlots);
   } catch (err) {

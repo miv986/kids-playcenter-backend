@@ -1,8 +1,5 @@
-import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
-
-
-const prisma = new PrismaClient();
+import prisma from '../utils/prisma';
 
 interface JwtPayload {
     userId: number;

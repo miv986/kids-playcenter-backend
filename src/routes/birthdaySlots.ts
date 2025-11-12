@@ -1,11 +1,10 @@
-import { PrismaClient } from "@prisma/client";
 import express from "express";
 import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import { endOfDay, format, parse, startOfDay } from "date-fns";
 import { validateSlotConflict } from "../utils/validateSlot";
 import { getFutureSlotsFilter } from "../utils/slotFilters";
+import prisma from "../utils/prisma";
 
-const prisma = new PrismaClient();
 const router = express.Router();
 
 
@@ -26,19 +25,17 @@ router.post("/", authenticateUser, async (req: any, res) => {
         return res.status(400).json({ error: "Fechas inválidas. Por favor, verifica las fechas proporcionadas." });
     }
 
-    // ✅ Validar que la fecha no sea anterior a hoy
-    const now = new Date();
-    const dateDayOnly = new Date(dateDay);
-    dateDayOnly.setHours(0, 0, 0, 0);
-    const nowDateOnly = new Date(now);
-    nowDateOnly.setHours(0, 0, 0, 0);
+    // ✅ Validar que la fecha no sea anterior a hoy (usando helpers estandarizados)
+    const { getStartOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+    const dateDayOnly = getStartOfDay(dateDay);
+    const nowDateOnly = getStartOfDay();
 
     if (dateDayOnly < nowDateOnly) {
         return res.status(400).json({ error: "No se pueden crear slots con fechas pasadas." });
     }
 
     // ✅ Si es hoy, validar que la hora de inicio no sea pasada
-    if (dateDayOnly.getTime() === nowDateOnly.getTime() && start < now) {
+    if (isToday(dateDay) && isPastDateTime(start)) {
         return res.status(400).json({ error: "No se pueden crear slots con horarios pasados." });
     }
 
@@ -121,14 +118,19 @@ router.get("/availableSlots", async (req: any, res) => {
 // Filtra slots pasados para usuarios finales
 router.get("/getSlotsByDay/:date", authenticateUser, async (req: any, res) => {
     const { date } = req.params;
-    const [year, month, day] = date.split("-").map(Number);
 
     if (!date) {
-        return res.status(400).json({ error: "Debes proporcionar un parámetro ?date=dd-MM-yyyy" });
+        return res.status(400).json({ error: "Debes proporcionar un parámetro ?date=YYYY-MM-DD" });
     }
 
-    const startOfDay = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
-    const endOfDay = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+    // ✅ Validar formato de fecha
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: "Formato de fecha inválido. Use YYYY-MM-DD." });
+    }
+
+    // Crear rango en hora local (estandarizado)
+    const { getDateRange } = await import("../utils/dateHelpers");
+    const { start: startOfDay, end: endOfDay } = getDateRange(date);
 
     try {
         const isAdmin = req.user?.role === "ADMIN";
@@ -202,19 +204,17 @@ router.put("/:id", authenticateUser, async (req: any, res) => {
         return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
     }
 
-    // ✅ Validar que la fecha no sea anterior a hoy
-    const now = new Date();
-    const dateDayOnly = new Date(dateDay);
-    dateDayOnly.setHours(0, 0, 0, 0);
-    const nowDateOnly = new Date(now);
-    nowDateOnly.setHours(0, 0, 0, 0);
+    // ✅ Validar que la fecha no sea anterior a hoy (usando helpers estandarizados)
+    const { getStartOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+    const dateDayOnly = getStartOfDay(dateDay);
+    const nowDateOnly = getStartOfDay();
 
     if (dateDayOnly < nowDateOnly) {
         return res.status(400).json({ error: "No se pueden actualizar slots a fechas pasadas." });
     }
 
     // ✅ Si es hoy, validar que la hora de inicio no sea pasada
-    if (dateDayOnly.getTime() === nowDateOnly.getTime() && start < now) {
+    if (isToday(dateDay) && isPastDateTime(start)) {
         return res.status(400).json({ error: "No se pueden actualizar slots a horarios pasados." });
     }
 

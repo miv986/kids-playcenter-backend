@@ -4,7 +4,7 @@ import { authenticateUser } from "../middleware/auth";
 import { CreateChildDTO } from "../dtos/CreateChildDTO";
 import { validateDTO } from "../middleware/validation";
 import { CreateChildNoteDTO } from "../dtos/CreateChildNoteDTO";
-const prisma = new PrismaClient();
+import prisma from "../utils/prisma";
 
 const router = express.Router();
 //

@@ -1,10 +1,9 @@
 import express from "express";
 import { authenticateUser } from "../middleware/auth";
-import { PrismaClient } from "@prisma/client";
 import { validateDTO } from "../middleware/validation";
 import { UpdatePackageDTO } from "../dtos/UpdatePackageDTO";
+import prisma from "../utils/prisma";
 
-const prisma = new PrismaClient();
 const router = express.Router();
 
 // GET /api/packages - Obtener todos los packs (público)

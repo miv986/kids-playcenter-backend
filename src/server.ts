@@ -1,7 +1,14 @@
+// Configurar variables de entorno PRIMERO, antes de cualquier import que las necesite
+import dotenv from 'dotenv';
+dotenv.config();
+
+// Validar variables de entorno críticas antes de continuar
+import { validateEnv } from './utils/validateEnv';
+validateEnv();
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import cookieParser from 'cookie-parser';
-import dotenv from 'dotenv';
 import { corsMiddleware } from './middleware/cors';
 import apiRoutes from './routes/api';
 import authRoutes from './routes/auth';
@@ -10,12 +17,6 @@ import apiBirthdaySlots from './routes/birthdaySlots';
 import apiDaycareSlots from './routes/daycareSlots';
 import apiDaycareBookings from './routes/daycareBookings';
 import apiPackages from './routes/packages';
-import { PrismaClient } from '@prisma/client';
-
-const client = new PrismaClient();
-
-// Configurar variables de entorno
-dotenv.config();
 
 const app = express();
 
