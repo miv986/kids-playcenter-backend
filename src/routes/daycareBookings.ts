@@ -89,64 +89,78 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
 
         const spotsToDiscount = childrenIds.length;
 
-        const startHour = start.getHours();
-        const endHour = end.getHours();
-        const expectedSlotsCount = endHour - startHour;
-
-        // Buscar slots de dos formas para debug:
-        // 1. Con rango de fechas (como /available/date)
-        // 2. Buscar todos los slots del día sin filtrar por hora primero
+        // ✅ Usar openHour y closeHour (DateTime) para comparar directamente con startTime y endTime
+        // Esto evita problemas de zona horaria porque comparamos DateTime con DateTime
+        // El frontend envía startTime/endTime en UTC, y los slots tienen openHour/closeHour en hora local
+        // Prisma/PostgreSQL maneja la conversión automáticamente
+        
+        // Buscar slots del día que se solapen con el rango startTime-endTime
         const allSlotsByDate = await prisma.daycareSlot.findMany({
             where: {
                 date: {
                     gte: startOfDay,
                     lte: endOfDay
-                }
+                },
+                // El slot debe solaparse con el rango solicitado:
+                // - El openHour del slot debe ser <= endTime (el slot empieza antes o cuando termina la reserva)
+                // - El closeHour del slot debe ser >= startTime (el slot termina después o cuando empieza la reserva)
+                openHour: { lte: end }, // El slot empieza antes o cuando termina la reserva
+                closeHour: { gte: start } // El slot termina después o cuando empieza la reserva
             },
         });
 
+        // Calcular cuántos slots se esperan (basado en la diferencia de horas)
+        const startHour = start.getHours();
+        const endHour = end.getHours();
+        const expectedSlotsCount = endHour - startHour;
+
         console.log(`[DEBUG] Búsqueda de slots:`);
+        console.log(`[DEBUG] - startTime recibido: ${startTime} (${start.toISOString()})`);
+        console.log(`[DEBUG] - endTime recibido: ${endTime} (${end.toISOString()})`);
         console.log(`[DEBUG] - Fecha string: ${dateString}`);
         console.log(`[DEBUG] - Rango fecha: ${startOfDay.toISOString()} a ${endOfDay.toISOString()}`);
-        console.log(`[DEBUG] - Horas buscadas: ${startHour} a ${endHour}`);
-        console.log(`[DEBUG] - Todos los slots del día (sin filtrar hora): ${allSlotsByDate.length}`);
+        console.log(`[DEBUG] - Slots encontrados (por solapamiento): ${allSlotsByDate.length}`);
         if (allSlotsByDate.length > 0) {
             console.log(`[DEBUG] - Slots del día:`, allSlotsByDate.map(s => ({
                 id: s.id,
-                date: s.date.toISOString(),
-                dateLocal: s.date.toLocaleString('es-ES'),
+                openHour: s.openHour.toISOString(),
+                closeHour: s.closeHour.toISOString(),
                 hour: s.hour,
                 status: s.status,
                 availableSpots: s.availableSpots
             })));
         }
 
-        // Filtrar por hora y status
-        const allSlotsDebug = allSlotsByDate.filter(s => 
-            s.hour >= startHour && s.hour < endHour
-        );
-
-        console.log(`[DEBUG] - Slots en rango horario (sin filtrar status): ${allSlotsDebug.length}`);
-
-        const allSlots = allSlotsDebug.filter(s => s.status === "OPEN");
+        // Filtrar por status
+        const allSlots = allSlotsByDate.filter(s => s.status === "OPEN");
 
         if (allSlots.length !== expectedSlotsCount) {
+            const allSlotsByStatus = allSlotsByDate.filter(s => s.status !== 'OPEN');
             console.log(`[DEBUG] Slots encontrados: ${allSlots.length}, esperados: ${expectedSlotsCount}`);
-            console.log(`[DEBUG] Fecha buscada: ${dateString}, Rango: ${startOfDay.toISOString()} - ${endOfDay.toISOString()}`);
-            console.log(`[DEBUG] Horas buscadas: ${startHour} - ${endHour}`);
-            console.log(`[DEBUG] Slots encontrados (OPEN):`, allSlots.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, status: s.status, availableSpots: s.availableSpots })));
-            console.log(`[DEBUG] Todos los slots (sin filtrar status):`, allSlotsDebug.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, status: s.status, availableSpots: s.availableSpots })));
+            console.log(`[DEBUG] Slots encontrados (OPEN):`, allSlots.map(s => ({ 
+                id: s.id, 
+                openHour: s.openHour.toISOString(), 
+                closeHour: s.closeHour.toISOString(),
+                hour: s.hour, 
+                status: s.status, 
+                availableSpots: s.availableSpots 
+            })));
+            console.log(`[DEBUG] Slots no OPEN:`, allSlotsByStatus.map(s => ({ 
+                id: s.id, 
+                hour: s.hour, 
+                status: s.status 
+            })));
             
             // Si hay slots pero no están OPEN, informar
-            if (allSlotsDebug.length > 0 && allSlots.length < allSlotsDebug.length) {
-                const closedSlots = allSlotsDebug.filter(s => s.status !== 'OPEN');
+            if (allSlotsByDate.length > 0 && allSlots.length < allSlotsByDate.length) {
+                const closedSlots = allSlotsByStatus;
                 return res.status(400).json({ 
-                    error: `Los slots para el horario seleccionado (${startHour}:00 - ${endHour}:00) no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).` 
+                    error: `Los slots para el horario seleccionado no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).` 
                 });
             }
             
             return res.status(400).json({ 
-                error: `No hay slots disponibles para el horario seleccionado (${startHour}:00 - ${endHour}:00) el día ${dateString}. Faltan ${expectedSlotsCount - allSlots.length} slot(s).` 
+                error: `No hay slots disponibles para el horario seleccionado el día ${dateString}. Faltan ${expectedSlotsCount - allSlots.length} slot(s).` 
             });
         }
 
@@ -389,46 +403,52 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         const expectedSlotsCount = endHour - startHour;
         const spotsNeeded = childrenIds.length;
 
-        // Usar la misma lógica que /available/date/:date que funciona correctamente
-        const allNewSlots = await prisma.daycareSlot.findMany({
+        // ✅ Usar openHour y closeHour (DateTime) para comparar directamente con startTime y endTime
+        // Esto evita problemas de zona horaria porque comparamos DateTime con DateTime
+        const allNewSlotsByDate = await prisma.daycareSlot.findMany({
             where: {
                 date: {
                     gte: startOfDay,
                     lte: endOfDay
                 },
-                hour: { gte: startHour, lt: endHour },
-                status: "OPEN"
+                // El slot debe solaparse con el rango solicitado
+                openHour: { lte: end },
+                closeHour: { gte: start }
             },
         });
 
-        // También buscar sin filtrar por status para debug
-        const allNewSlotsDebug = await prisma.daycareSlot.findMany({
-            where: {
-                date: {
-                    gte: startOfDay,
-                    lte: endOfDay
-                },
-                hour: { gte: startHour, lt: endHour }
-            },
-        });
+        // Filtrar por status
+        const allNewSlots = allNewSlotsByDate.filter(s => s.status === "OPEN");
 
         if (allNewSlots.length !== expectedSlotsCount) {
+            const allNewSlotsByStatus = allNewSlotsByDate.filter(s => s.status !== 'OPEN');
             console.log(`[DEBUG MODIFICAR] Slots encontrados: ${allNewSlots.length}, esperados: ${expectedSlotsCount}`);
-            console.log(`[DEBUG MODIFICAR] Fecha buscada: ${dateString}, Rango: ${startOfDay.toISOString()} - ${endOfDay.toISOString()}`);
-            console.log(`[DEBUG MODIFICAR] Horas buscadas: ${startHour} - ${endHour}`);
-            console.log(`[DEBUG MODIFICAR] Slots encontrados (OPEN):`, allNewSlots.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, status: s.status, availableSpots: s.availableSpots })));
-            console.log(`[DEBUG MODIFICAR] Todos los slots (sin filtrar status):`, allNewSlotsDebug.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, status: s.status, availableSpots: s.availableSpots })));
+            console.log(`[DEBUG MODIFICAR] startTime: ${startTime} (${start.toISOString()})`);
+            console.log(`[DEBUG MODIFICAR] endTime: ${endTime} (${end.toISOString()})`);
+            console.log(`[DEBUG MODIFICAR] Slots encontrados (OPEN):`, allNewSlots.map(s => ({ 
+                id: s.id, 
+                openHour: s.openHour.toISOString(), 
+                closeHour: s.closeHour.toISOString(),
+                hour: s.hour, 
+                status: s.status, 
+                availableSpots: s.availableSpots 
+            })));
+            console.log(`[DEBUG MODIFICAR] Slots no OPEN:`, allNewSlotsByStatus.map(s => ({ 
+                id: s.id, 
+                hour: s.hour, 
+                status: s.status 
+            })));
             
             // Si hay slots pero no están OPEN, informar
-            if (allNewSlotsDebug.length > 0 && allNewSlots.length < allNewSlotsDebug.length) {
-                const closedSlots = allNewSlotsDebug.filter(s => s.status !== 'OPEN');
+            if (allNewSlotsByDate.length > 0 && allNewSlots.length < allNewSlotsByDate.length) {
+                const closedSlots = allNewSlotsByStatus;
                 return res.status(400).json({ 
-                    error: `Los slots para el horario seleccionado (${startHour}:00 - ${endHour}:00) no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).` 
+                    error: `Los slots para el horario seleccionado no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).` 
                 });
             }
             
             return res.status(400).json({ 
-                error: `No hay slots disponibles para el horario seleccionado (${startHour}:00 - ${endHour}:00) el día ${dateString}. Faltan ${expectedSlotsCount - allNewSlots.length} slot(s).` 
+                error: `No hay slots disponibles para el horario seleccionado el día ${dateString}. Faltan ${expectedSlotsCount - allNewSlots.length} slot(s).` 
             });
         }
 
