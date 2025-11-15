@@ -5,6 +5,7 @@ import { CreateBirthdayBookingDTO } from "../dtos/CreateBirthdayBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getBirthdayBookingCreatedEmail, getBirthdayBookingConfirmedEmail, getBirthdayBookingCancelledEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
+import { executeWithRetry } from "../utils/transactionRetry";
 const router = express.Router();
 
 //
@@ -48,7 +49,7 @@ router.post("/createBirthdayBooking", optionalAuthenticate, validateDTO(CreateBi
 
     try {
         // ✅ Usar transacción para prevenir race conditions - verificar y crear atómicamente
-        const addedBooking = await prisma.$transaction(async (tx) => {
+        const addedBooking = await executeWithRetry(() => prisma.$transaction(async (tx) => {
             // Verificar slot dentro de la transacción para evitar race conditions
             const slot = await tx.birthdaySlot.findUnique({
                 where: { id: Number(slotId) },
@@ -106,7 +107,10 @@ router.post("/createBirthdayBooking", optionalAuthenticate, validateDTO(CreateBi
             });
 
             return booking;
-        });
+        }, {
+            isolationLevel: 'Serializable', // Máxima protección contra race conditions
+            timeout: 10000 // 10 segundos timeout
+        }));
 
         // Enviar email de confirmación de reserva creada
         if (finalGuestEmail) {
@@ -148,6 +152,12 @@ router.post("/createBirthdayBooking", optionalAuthenticate, validateDTO(CreateBi
         }
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Slot no encontrado." });
+        }
+        if (err.code === 'P2034') {
+            // Transacción falló por conflicto de serialización
+            return res.status(409).json({ 
+                error: "La reserva no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
         }
         res.status(500).json({ error: "Error interno del servidor." });
     }
@@ -292,7 +302,7 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
         }
 
         // Usar transacción para asegurar atomicidad
-        const updatedBooking = await prisma.$transaction(async (tx) => {
+        const updatedBooking = await executeWithRetry(() => prisma.$transaction(async (tx) => {
             // Si la reserva se cancela, liberar el slot y desconectarlo
             if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && previousSlotId) {
                 // Liberar el slot (volver a OPEN)
@@ -344,7 +354,10 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
             });
 
             return booking;
-        });
+        }, {
+            isolationLevel: 'Serializable', // Máxima protección contra race conditions
+            timeout: 10000 // 10 segundos timeout
+        }));
 
         res.json(updatedBooking);
     } catch (err: any) {
@@ -354,6 +367,12 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
         }
         if (err.code === 'P2002') {
             return res.status(400).json({ error: "Conflicto con otra reserva." });
+        }
+        if (err.code === 'P2034') {
+            // Transacción falló por conflicto de serialización
+            return res.status(409).json({ 
+                error: "La modificación no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
         }
         res.status(500).json({ error: "Error interno del servidor." });
     }
@@ -418,7 +437,7 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
             }
         }
 
-        const updatedBooking = await prisma.$transaction(async (tx) => {
+        const updatedBooking = await executeWithRetry(() => prisma.$transaction(async (tx) => {
             // Si la reserva se cancela, liberar el slot y desconectarlo
             if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && previousSlotId) {
                 // Liberar el slot (volver a OPEN)
@@ -464,7 +483,10 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
             });
 
             return booking;
-        });
+        }, {
+            isolationLevel: 'Serializable', // Máxima protección contra race conditions
+            timeout: 10000 // 10 segundos timeout
+        }));
 
         // Enviar email según el cambio de estado
         if (existingBooking.guestEmail && status && status !== previousStatus) {
@@ -512,6 +534,12 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
+        if (err.code === 'P2034') {
+            // Transacción falló por conflicto de serialización
+            return res.status(409).json({ 
+                error: "La actualización no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
+        }
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
@@ -541,7 +569,7 @@ router.delete("/deleteBirthdayBooking/:id", authenticateUser, async (req: any, r
         }
 
         // ✅ Usar transacción para liberar el slot antes de eliminar
-        await prisma.$transaction(async (tx) => {
+        await executeWithRetry(() => prisma.$transaction(async (tx) => {
             // Primero liberar y desconectar el slot si existe
             if (existingBooking.slotId && existingBooking.slot) {
                 // Liberar el slot (volver a OPEN)
@@ -552,16 +580,25 @@ router.delete("/deleteBirthdayBooking/:id", authenticateUser, async (req: any, r
             }
 
             // Luego eliminar la reserva (esto desconectará automáticamente el slot por la relación)
-            await tx.birthdayBooking.delete({
-                where: { id: bookingId }
-            });
-        });
+                await tx.birthdayBooking.delete({
+                    where: { id: bookingId }
+                });
+        }, {
+            isolationLevel: 'Serializable', // Máxima protección contra race conditions
+            timeout: 10000 // 10 segundos timeout
+        }));
 
         res.json({ message: "Reserva eliminada correctamente" });
     } catch (err: any) {
         console.error("Error eliminando reserva de cumpleaños:", err);
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
+        }
+        if (err.code === 'P2034') {
+            // Transacción falló por conflicto de serialización
+            return res.status(409).json({ 
+                error: "La eliminación no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
         }
         res.status(500).json({ error: "Error interno del servidor." });
     }

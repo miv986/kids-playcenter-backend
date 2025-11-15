@@ -113,6 +113,12 @@ model DaycareBooking {
   // Relación con los hijos de la reserva
   children         User[]    @relation("DaycareBookingChildren")
 
+  // Índices para mejorar rendimiento de búsquedas
+  @@index([userId, status])       // Para listar reservas de un usuario
+  @@index([startTime, endTime])   // Para búsquedas por rango de fechas
+  @@index([status])               // Para filtrar por estado
+  @@index([createdAt])            // Para ordenar por fecha de creación
+
 }
 
 //Tabla de plazas para reservas de ludoteca diaria
@@ -132,6 +138,12 @@ model DaycareSlot {
 
   // Relación con reservas de ludoteca
   bookings        DaycareBooking[] @relation("DaycareSlotBookings")
+
+  // Índices para mejorar rendimiento de búsquedas
+  @@index([date, hour])           // Para búsquedas por fecha y hora
+  @@index([date, status])         // Para filtrar slots disponibles por fecha
+  @@index([openHour, closeHour])  // Para búsquedas por rango horario
+  @@index([status])               // Para filtrar por estado
 
 }
 
@@ -154,6 +166,11 @@ model BirthdayBooking {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  // Índices para mejorar rendimiento de búsquedas
+  @@index([status])               // Para filtrar por estado
+  @@index([guestEmail])           // Para búsquedas por email
+  @@index([createdAt])           // Para ordenar por fecha
+
 }
 
 // Plazas para reservas de cumpleaños
@@ -170,6 +187,12 @@ model BirthdaySlot {
   booking     BirthdayBooking? // reserva que ocupa este slot
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  // Índices para mejorar rendimiento de búsquedas
+  @@index([date])                 // Para búsquedas por fecha
+  @@index([startTime, endTime])   // Para búsquedas por rango horario
+  @@index([status])               // Para filtrar por estado
+
 }
 
 // Configuración de packs de cumpleaños (editables por admin)

@@ -6,6 +6,7 @@ import { UpdateDaycareBookingDTO } from "../dtos/UpdateDaycareBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
+import { executeWithRetry } from "../utils/transactionRetry";
 
 const router = express.Router();
 
@@ -55,9 +56,11 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         const localDay = start.getDate();
         const dateString = `${localYear}-${String(localMonth).padStart(2, '0')}-${String(localDay).padStart(2, '0')}`;
         
-        console.log(`[DEBUG] startTime recibido: ${startTime}`);
-        console.log(`[DEBUG] start parseado: ${start.toISOString()}`);
-        console.log(`[DEBUG] Fecha local extraída: ${dateString} (año: ${localYear}, mes: ${localMonth}, día: ${localDay})`);
+        if (process.env.NODE_ENV === 'development') {
+            console.log(`[DEBUG] startTime recibido: ${startTime}`);
+            console.log(`[DEBUG] start parseado: ${start.toISOString()}`);
+            console.log(`[DEBUG] Fecha local extraída: ${dateString} (año: ${localYear}, mes: ${localMonth}, día: ${localDay})`);
+        }
         
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
         const date = getStartOfDay(start);
@@ -89,121 +92,76 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
 
         const spotsToDiscount = childrenIds.length;
 
-        // ✅ Usar openHour y closeHour (DateTime) para comparar directamente con startTime y endTime
-        // Esto evita problemas de zona horaria porque comparamos DateTime con DateTime
-        // El frontend envía startTime/endTime en UTC, y los slots tienen openHour/closeHour en hora local
-        // Prisma/PostgreSQL maneja la conversión automáticamente
-        
-        // Buscar slots del día que se solapen con el rango startTime-endTime
-        const allSlotsByDate = await prisma.daycareSlot.findMany({
-            where: {
-                date: {
-                    gte: startOfDay,
-                    lte: endOfDay
-                },
-                // El slot debe solaparse con el rango solicitado:
-                // - El openHour del slot debe ser <= endTime (el slot empieza antes o cuando termina la reserva)
-                // - El closeHour del slot debe ser >= startTime (el slot termina después o cuando empieza la reserva)
-                openHour: { lte: end }, // El slot empieza antes o cuando termina la reserva
-                closeHour: { gte: start } // El slot termina después o cuando empieza la reserva
-            },
-        });
-
         // Calcular cuántos slots se esperan (basado en la diferencia de horas)
         const startHour = start.getHours();
         const endHour = end.getHours();
         const expectedSlotsCount = endHour - startHour;
 
-        console.log(`[DEBUG] Búsqueda de slots:`);
-        console.log(`[DEBUG] - startTime recibido: ${startTime} (${start.toISOString()})`);
-        console.log(`[DEBUG] - endTime recibido: ${endTime} (${end.toISOString()})`);
-        console.log(`[DEBUG] - Fecha string: ${dateString}`);
-        console.log(`[DEBUG] - Rango fecha: ${startOfDay.toISOString()} a ${endOfDay.toISOString()}`);
-        console.log(`[DEBUG] - Slots encontrados (por solapamiento): ${allSlotsByDate.length}`);
-        if (allSlotsByDate.length > 0) {
-            console.log(`[DEBUG] - Slots del día:`, allSlotsByDate.map(s => ({
-                id: s.id,
-                openHour: s.openHour.toISOString(),
-                closeHour: s.closeHour.toISOString(),
-                hour: s.hour,
-                status: s.status,
-                availableSpots: s.availableSpots
-            })));
-        }
+        // ✅ CRÍTICO: Mover toda la validación DENTRO de la transacción para prevenir race conditions
+        // Usar isolationLevel: 'Serializable' para máxima seguridad
+        // Usar retry logic para manejar conflictos de serialización automáticamente
+        const booking = await executeWithRetry(() => prisma.$transaction(async (tx) => {
+            // ✅ Validar slots DENTRO de la transacción (previene race conditions)
+            // Usar openHour y closeHour (DateTime) para comparar directamente con startTime y endTime
+            const allSlotsByDate = await tx.daycareSlot.findMany({
+                where: {
+                    date: {
+                        gte: startOfDay,
+                        lte: endOfDay
+                    },
+                    // El slot debe solaparse con el rango solicitado
+                    openHour: { lte: end },
+                    closeHour: { gte: start }
+                },
+            });
 
-        // Filtrar por status
-        const allSlots = allSlotsByDate.filter(s => s.status === "OPEN");
+            // Filtrar por status
+            const allSlots = allSlotsByDate.filter(s => s.status === "OPEN");
 
-        if (allSlots.length !== expectedSlotsCount) {
-            const allSlotsByStatus = allSlotsByDate.filter(s => s.status !== 'OPEN');
-            console.log(`[DEBUG] Slots encontrados: ${allSlots.length}, esperados: ${expectedSlotsCount}`);
-            console.log(`[DEBUG] Slots encontrados (OPEN):`, allSlots.map(s => ({ 
-                id: s.id, 
-                openHour: s.openHour.toISOString(), 
-                closeHour: s.closeHour.toISOString(),
-                hour: s.hour, 
-                status: s.status, 
-                availableSpots: s.availableSpots 
-            })));
-            console.log(`[DEBUG] Slots no OPEN:`, allSlotsByStatus.map(s => ({ 
-                id: s.id, 
-                hour: s.hour, 
-                status: s.status 
-            })));
-            
-            // Si hay slots pero no están OPEN, informar
-            if (allSlotsByDate.length > 0 && allSlots.length < allSlotsByDate.length) {
-                const closedSlots = allSlotsByStatus;
-                return res.status(400).json({ 
-                    error: `Los slots para el horario seleccionado no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).` 
-                });
+            if (allSlots.length !== expectedSlotsCount) {
+                const allSlotsByStatus = allSlotsByDate.filter(s => s.status !== 'OPEN');
+                
+                // Si hay slots pero no están OPEN, informar
+                if (allSlotsByDate.length > 0 && allSlots.length < allSlotsByDate.length) {
+                    const closedSlots = allSlotsByStatus;
+                    throw new Error(`Los slots para el horario seleccionado no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).`);
+                }
+                
+                throw new Error(`No hay slots disponibles para el horario seleccionado el día ${dateString}. Faltan ${expectedSlotsCount - allSlots.length} slot(s).`);
             }
+
+            // ✅ Validar plazas disponibles DENTRO de la transacción
+            const slotsWithSpots = allSlots.filter(slot => slot.availableSpots >= spotsToDiscount);
             
-            return res.status(400).json({ 
-                error: `No hay slots disponibles para el horario seleccionado el día ${dateString}. Faltan ${expectedSlotsCount - allSlots.length} slot(s).` 
-            });
-        }
+            if (slotsWithSpots.length !== expectedSlotsCount) {
+                const slotsWithoutSpots = allSlots.filter(slot => slot.availableSpots < spotsToDiscount);
+                const hoursWithoutSpots = slotsWithoutSpots.map(s => s.hour).join(", ");
+                throw new Error(`No hay suficientes plazas disponibles. Se necesitan ${spotsToDiscount} plaza(s) pero los slots de las ${hoursWithoutSpots}:00 no tienen suficientes plazas disponibles.`);
+            }
 
-        // Luego verificar que tengan plazas suficientes
-        const slotsWithSpots = allSlots.filter(slot => slot.availableSpots >= spotsToDiscount);
-        
-        if (slotsWithSpots.length !== expectedSlotsCount) {
-            const slotsWithoutSpots = allSlots.filter(slot => slot.availableSpots < spotsToDiscount);
-            const hoursWithoutSpots = slotsWithoutSpots.map(s => s.hour).join(", ");
-            return res.status(400).json({ 
-                error: `No hay suficientes plazas disponibles. Se necesitan ${spotsToDiscount} plaza(s) pero los slots de las ${hoursWithoutSpots}:00 no tienen suficientes plazas disponibles.` 
-            });
-        }
+            const slots = slotsWithSpots;
 
-        const slots = slotsWithSpots;
-
-        // Verificar si el usuario ya tiene una reserva en alguno de estos slots
-        const slotIds = slots.map(s => s.id);
-        const existingBooking = await prisma.daycareBooking.findFirst({
-            where: {
-                userId: user_id,
-                slots: {
-                    some: {
-                        id: { in: slotIds }
+            // ✅ Validar reserva existente DENTRO de la transacción (previene duplicados)
+            const slotIds = slots.map(s => s.id);
+            const existingBooking = await tx.daycareBooking.findFirst({
+                where: {
+                    userId: user_id,
+                    slots: {
+                        some: {
+                            id: { in: slotIds }
+                        }
+                    },
+                    status: {
+                        not: 'CANCELLED'
                     }
                 },
-                status: {
-                    not: 'CANCELLED'
-                }
-            },
-            include: {
-                slots: true
-            }
-        });
-
-        if (existingBooking) {
-            return res.status(400).json({
-                error: "Ya tienes una reserva activa para ese día/horario. Por favor, modifica o cancela tu reserva existente."
             });
-        }
 
-        const booking = await prisma.$transaction(async (tx) => {
-            // Crear la reserva
+            if (existingBooking) {
+                throw new Error("Ya tienes una reserva activa para ese día/horario. Por favor, modifica o cancela tu reserva existente.");
+            }
+
+            // ✅ Crear la reserva y descontar plazas atómicamente
             const newBooking = await tx.daycareBooking.create({
                 data: {
                     comments,
@@ -212,10 +170,10 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
                     userId: user_id,
                     status: "CONFIRMED",
                     slots: {
-                        connect: slots.map((s) => ({ id: s.id })) //vincula slots
+                        connect: slots.map((s) => ({ id: s.id }))
                     },
                     children: {
-                        connect: childrenIds.map((id: number) => ({ id })) //vincula hijos
+                        connect: childrenIds.map((id: number) => ({ id }))
                     },
                 },
                 include: { 
@@ -225,14 +183,29 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             });
 
             // Descontar plazas de cada slot por cada niño
+            // ✅ Validar que availableSpots no vaya a negativo y no exceda capacidad
             for (const s of slots) {
-                await tx.daycareSlot.update({
+                const updatedSlot = await tx.daycareSlot.update({
                     where: { id: s.id },
                     data: { availableSpots: { decrement: spotsToDiscount } },
                 });
+                
+                // Verificar que no haya ido a negativo (aunque debería estar validado antes)
+                if (updatedSlot.availableSpots < 0) {
+                    throw new Error(`Error: Las plazas disponibles no pueden ser negativas. Slot ${s.id} tiene ${updatedSlot.availableSpots} plazas.`);
+                }
+                
+                // ✅ Validar que no exceda capacidad
+                if (updatedSlot.availableSpots > updatedSlot.capacity) {
+                    throw new Error(`Error: Las plazas disponibles (${updatedSlot.availableSpots}) no pueden exceder la capacidad (${updatedSlot.capacity}). Slot ${s.id}.`);
+                }
             }
+            
             return newBooking;
-        });
+        }, {
+            isolationLevel: 'Serializable', // Máxima protección contra race conditions
+            timeout: 10000 // 10 segundos timeout
+        }));
 
         // Enviar email de confirmación
         if (booking.user?.email) {
@@ -266,6 +239,18 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         });
     } catch (err: any) {
         console.error("Error al crear reserva:", err);
+        
+        // Manejar errores de validación lanzados dentro de la transacción
+        if (err.message) {
+            if (err.message.includes("No hay slots disponibles") || 
+                err.message.includes("no están disponibles") ||
+                err.message.includes("No hay suficientes plazas") ||
+                err.message.includes("Ya tienes una reserva activa") ||
+                err.message.includes("no pueden ser negativas")) {
+                return res.status(400).json({ error: err.message });
+            }
+        }
+        
         // Manejar errores específicos de Prisma
         if (err.code === 'P2002') {
             return res.status(400).json({ error: "Ya existe una reserva con estos datos." });
@@ -276,6 +261,13 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         if (err.code === 'P2003') {
             return res.status(400).json({ error: "Referencia inválida. Verifica los IDs proporcionados." });
         }
+        if (err.code === 'P2034') {
+            // Transacción falló por conflicto de serialización
+            return res.status(409).json({ 
+                error: "La reserva no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
+        }
+        
         return res.status(500).json({ error: "Error interno del servidor." });
     } 
 }
@@ -362,9 +354,11 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         const localDay = start.getDate();
         const dateString = `${localYear}-${String(localMonth).padStart(2, '0')}-${String(localDay).padStart(2, '0')}`;
         
-        console.log(`[DEBUG MODIFICAR] startTime recibido: ${startTime}`);
-        console.log(`[DEBUG MODIFICAR] start parseado: ${start.toISOString()}`);
-        console.log(`[DEBUG MODIFICAR] Fecha local extraída: ${dateString} (año: ${localYear}, mes: ${localMonth}, día: ${localDay})`);
+        if (process.env.NODE_ENV === 'development') {
+            console.log(`[DEBUG MODIFICAR] startTime recibido: ${startTime}`);
+            console.log(`[DEBUG MODIFICAR] start parseado: ${start.toISOString()}`);
+            console.log(`[DEBUG MODIFICAR] Fecha local extraída: ${dateString} (año: ${localYear}, mes: ${localMonth}, día: ${localDay})`);
+        }
         
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
         const date = getStartOfDay(start);
@@ -403,86 +397,88 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         const expectedSlotsCount = endHour - startHour;
         const spotsNeeded = childrenIds.length;
 
-        // ✅ Usar openHour y closeHour (DateTime) para comparar directamente con startTime y endTime
-        // Esto evita problemas de zona horaria porque comparamos DateTime con DateTime
-        const allNewSlotsByDate = await prisma.daycareSlot.findMany({
-            where: {
-                date: {
-                    gte: startOfDay,
-                    lte: endOfDay
+        // ✅ CRÍTICO: Mover toda la validación DENTRO de la transacción para prevenir race conditions
+        // Usar retry logic para manejar conflictos de serialización automáticamente
+        const updatedBooking = await executeWithRetry(() => prisma.$transaction(async (tx) => {
+            // ✅ Validar slots nuevos DENTRO de la transacción (previene race conditions)
+            const allNewSlotsByDate = await tx.daycareSlot.findMany({
+                where: {
+                    date: {
+                        gte: startOfDay,
+                        lte: endOfDay
+                    },
+                    // El slot debe solaparse con el rango solicitado
+                    openHour: { lte: end },
+                    closeHour: { gte: start }
                 },
-                // El slot debe solaparse con el rango solicitado
-                openHour: { lte: end },
-                closeHour: { gte: start }
-            },
-        });
+            });
 
-        // Filtrar por status
-        const allNewSlots = allNewSlotsByDate.filter(s => s.status === "OPEN");
+            // Filtrar por status
+            const allNewSlots = allNewSlotsByDate.filter(s => s.status === "OPEN");
 
-        if (allNewSlots.length !== expectedSlotsCount) {
-            const allNewSlotsByStatus = allNewSlotsByDate.filter(s => s.status !== 'OPEN');
-            console.log(`[DEBUG MODIFICAR] Slots encontrados: ${allNewSlots.length}, esperados: ${expectedSlotsCount}`);
-            console.log(`[DEBUG MODIFICAR] startTime: ${startTime} (${start.toISOString()})`);
-            console.log(`[DEBUG MODIFICAR] endTime: ${endTime} (${end.toISOString()})`);
-            console.log(`[DEBUG MODIFICAR] Slots encontrados (OPEN):`, allNewSlots.map(s => ({ 
-                id: s.id, 
-                openHour: s.openHour.toISOString(), 
-                closeHour: s.closeHour.toISOString(),
-                hour: s.hour, 
-                status: s.status, 
-                availableSpots: s.availableSpots 
-            })));
-            console.log(`[DEBUG MODIFICAR] Slots no OPEN:`, allNewSlotsByStatus.map(s => ({ 
-                id: s.id, 
-                hour: s.hour, 
-                status: s.status 
-            })));
-            
-            // Si hay slots pero no están OPEN, informar
-            if (allNewSlotsByDate.length > 0 && allNewSlots.length < allNewSlotsByDate.length) {
-                const closedSlots = allNewSlotsByStatus;
-                return res.status(400).json({ 
-                    error: `Los slots para el horario seleccionado no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).` 
-                });
+            if (allNewSlots.length !== expectedSlotsCount) {
+                const allNewSlotsByStatus = allNewSlotsByDate.filter(s => s.status !== 'OPEN');
+                
+                // Si hay slots pero no están OPEN, informar
+                if (allNewSlotsByDate.length > 0 && allNewSlots.length < allNewSlotsByDate.length) {
+                    const closedSlots = allNewSlotsByStatus;
+                    throw new Error(`Los slots para el horario seleccionado no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).`);
+                }
+                
+                throw new Error(`No hay slots disponibles para el horario seleccionado el día ${dateString}. Faltan ${expectedSlotsCount - allNewSlots.length} slot(s).`);
             }
+
+            // ✅ Validar plazas disponibles DENTRO de la transacción
+            const newSlotsWithSpots = allNewSlots.filter(slot => slot.availableSpots >= spotsNeeded);
             
-            return res.status(400).json({ 
-                error: `No hay slots disponibles para el horario seleccionado el día ${dateString}. Faltan ${expectedSlotsCount - allNewSlots.length} slot(s).` 
-            });
-        }
+            if (newSlotsWithSpots.length !== expectedSlotsCount) {
+                const slotsWithoutSpots = allNewSlots.filter(slot => slot.availableSpots < spotsNeeded);
+                const hoursWithoutSpots = slotsWithoutSpots.map(s => s.hour).join(", ");
+                throw new Error(`No hay suficientes plazas disponibles. Se necesitan ${spotsNeeded} plaza(s) pero los slots de las ${hoursWithoutSpots}:00 no tienen suficientes plazas disponibles.`);
+            }
 
-        // Luego verificar que tengan plazas suficientes
-        const newSlotsWithSpots = allNewSlots.filter(slot => slot.availableSpots >= spotsNeeded);
-        
-        if (newSlotsWithSpots.length !== expectedSlotsCount) {
-            const slotsWithoutSpots = allNewSlots.filter(slot => slot.availableSpots < spotsNeeded);
-            const hoursWithoutSpots = slotsWithoutSpots.map(s => s.hour).join(", ");
-            return res.status(400).json({ 
-                error: `No hay suficientes plazas disponibles. Se necesitan ${spotsNeeded} plaza(s) pero los slots de las ${hoursWithoutSpots}:00 no tienen suficientes plazas disponibles.` 
-            });
-        }
+            const newSlots = newSlotsWithSpots;
 
-        const newSlots = newSlotsWithSpots;
-
-        // 🧩 Transacción segura para revertir si algo falla
-        const updatedBooking = await prisma.$transaction(async (tx) => {
             // 🟢 Devolver plazas de slots antiguos
+            // ✅ Validar que no exceda capacidad después de incrementar
             const oldChildrenCount = existingBooking.children.length;
             for (const oldSlot of existingBooking.slots) {
-                await tx.daycareSlot.update({
+                const updatedOldSlot = await tx.daycareSlot.update({
                     where: { id: oldSlot.id },
                     data: { availableSpots: { increment: oldChildrenCount } },
                 });
+                
+                // Validar que no exceda capacidad
+                if (updatedOldSlot.availableSpots > updatedOldSlot.capacity) {
+                    // Ajustar a capacidad máxima
+                    await tx.daycareSlot.update({
+                        where: { id: oldSlot.id },
+                        data: { availableSpots: updatedOldSlot.capacity }
+                    });
+                    if (process.env.NODE_ENV === 'development') {
+                        console.warn(`Slot ${oldSlot.id}: availableSpots ajustado a capacity (${updatedOldSlot.capacity})`);
+                    }
+                }
             }
 
             // 🔴 Restar plazas de los nuevos slots
+            // ✅ Validar que availableSpots no vaya a negativo y no exceda capacidad
             const newChildrenCount = childrenIds.length;
             for (const newSlot of newSlots) {
-                await tx.daycareSlot.update({
+                const updatedSlot = await tx.daycareSlot.update({
                     where: { id: newSlot.id },
                     data: { availableSpots: { decrement: newChildrenCount } },
                 });
+                
+                // Verificar que no haya ido a negativo
+                if (updatedSlot.availableSpots < 0) {
+                    throw new Error(`Error: Las plazas disponibles no pueden ser negativas. Slot ${newSlot.id} tiene ${updatedSlot.availableSpots} plazas.`);
+                }
+                
+                // ✅ Validar que no exceda capacidad
+                if (updatedSlot.availableSpots > updatedSlot.capacity) {
+                    throw new Error(`Error: Las plazas disponibles (${updatedSlot.availableSpots}) no pueden exceder la capacidad (${updatedSlot.capacity}). Slot ${newSlot.id}.`);
+                }
             }
 
             // 🔁 Actualizar la reserva
@@ -506,7 +502,10 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             });
 
             return booking;
-        });
+        }, {
+            isolationLevel: 'Serializable', // Máxima protección contra race conditions
+            timeout: 10000 // 10 segundos timeout
+        }));
 
         return res.json({
             message: "✅ Reserva modificada correctamente.",
@@ -514,6 +513,17 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         });
     } catch (err: any) {
         console.error("Error al modificar reserva:", err);
+        
+        // Manejar errores de validación lanzados dentro de la transacción
+        if (err.message) {
+            if (err.message.includes("No hay slots disponibles") || 
+                err.message.includes("no están disponibles") ||
+                err.message.includes("No hay suficientes plazas") ||
+                err.message.includes("no pueden ser negativas")) {
+                return res.status(400).json({ error: err.message });
+            }
+        }
+        
         // Manejar errores específicos de Prisma
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva o recursos relacionados no encontrados." });
@@ -521,6 +531,13 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         if (err.code === 'P2003') {
             return res.status(400).json({ error: "Referencia inválida. Verifica los IDs proporcionados." });
         }
+        if (err.code === 'P2034') {
+            // Transacción falló por conflicto de serialización
+            return res.status(409).json({ 
+                error: "La modificación no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
+        }
+        
         return res.status(500).json({ error: "Error interno del servidor." });
     } 
 }
@@ -569,20 +586,36 @@ router.put("/:id/cancel", authenticateUser, async (req: any, res: any) => {
         
         // Solo cancelar si no está ya cancelada
         if (existingBooking.status !== 'CANCELLED') {
-            await prisma.$transaction(async (tx) => {
+            await executeWithRetry(() => prisma.$transaction(async (tx) => {
                 await tx.daycareBooking.update({
                     where: { id: bookingId },
                     data: { status: 'CANCELLED' }
                 });
                 
                 // Liberar plazas de los slots
+                // ✅ Validar que no exceda capacidad después de incrementar
                 for (const slot of existingBooking.slots) {
-                    await tx.daycareSlot.update({
+                    const updatedSlot = await tx.daycareSlot.update({
                         where: { id: slot.id },
                         data: { availableSpots: { increment: existingBooking.children.length } }
                     });
+                    
+                    // Validar que no exceda capacidad
+                    if (updatedSlot.availableSpots > updatedSlot.capacity) {
+                        // Ajustar a capacidad máxima
+                        await tx.daycareSlot.update({
+                            where: { id: slot.id },
+                            data: { availableSpots: updatedSlot.capacity }
+                        });
+                        if (process.env.NODE_ENV === 'development') {
+                            console.warn(`Slot ${slot.id}: availableSpots ajustado a capacity (${updatedSlot.capacity})`);
+                        }
+                    }
                 }
-            });
+            }, {
+                isolationLevel: 'Serializable', // Máxima protección contra race conditions
+                timeout: 10000 // 10 segundos timeout
+            }));
         }
         
         // Enviar email de cancelación
@@ -615,9 +648,21 @@ router.put("/:id/cancel", authenticateUser, async (req: any, res: any) => {
         return res.json({ message: "✅ Reserva cancelada correctamente" });
     } catch (err: any) {
         console.error("Error al cancelar reserva:", err);
+        
+        // Manejar errores específicos de Prisma
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
+        if (err.code === 'P2003') {
+            return res.status(400).json({ error: "Referencia inválida. Verifica los IDs proporcionados." });
+        }
+        if (err.code === 'P2034') {
+            // Transacción falló por conflicto de serialización
+            return res.status(409).json({ 
+                error: "La cancelación no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
+        }
+        
         return res.status(500).json({ error: "Error interno del servidor." });
     }
 });
@@ -702,31 +747,57 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
         }
 
         // 🧩 Ejecutar todo en una transacción
-        await prisma.$transaction(async (tx) => {
+        // Usar retry logic para manejar conflictos de serialización automáticamente
+        await executeWithRetry(() => prisma.$transaction(async (tx) => {
             // 1️⃣ Liberar plazas de todos los slots asociados
+            // ✅ Validar que no exceda capacidad después de incrementar
             const childrenCount = booking.children.length;
             for (const slot of booking.slots) {
-                await tx.daycareSlot.update({
+                const updatedSlot = await tx.daycareSlot.update({
                     where: { id: slot.id },
                     data: { availableSpots: { increment: childrenCount } },
                 });
+                
+                // Validar que no exceda capacidad
+                if (updatedSlot.availableSpots > updatedSlot.capacity) {
+                    // Ajustar a capacidad máxima
+                    await tx.daycareSlot.update({
+                        where: { id: slot.id },
+                        data: { availableSpots: updatedSlot.capacity }
+                    });
+                    if (process.env.NODE_ENV === 'development') {
+                        console.warn(`Slot ${slot.id}: availableSpots ajustado a capacity (${updatedSlot.capacity})`);
+                    }
+                }
             }
 
             // 2️⃣ Eliminar la reserva
             await tx.daycareBooking.delete({
                 where: { id: bookingId },
             });
-        });
+        }, {
+            isolationLevel: 'Serializable', // Máxima protección contra race conditions
+            timeout: 10000 // 10 segundos timeout
+        }));
 
         res.json({ message: "✅ Reserva eliminada correctamente y plazas liberadas." });
     } catch (err: any) {
         console.error("Error al eliminar reserva:", err);
+        
+        // Manejar errores específicos de Prisma
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
         if (err.code === 'P2003') {
             return res.status(400).json({ error: "No se puede eliminar la reserva debido a referencias existentes." });
         }
+        if (err.code === 'P2034') {
+            // Transacción falló por conflicto de serialización
+            return res.status(409).json({ 
+                error: "La eliminación no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
+        }
+        
         res.status(500).json({ error: "Error interno del servidor." });
     } 
 });
