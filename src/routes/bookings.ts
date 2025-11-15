@@ -326,9 +326,9 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
                 status,
             };
 
-            // Si se cancela, desconectar el slot
+            // Si se cancela, desconectar el slot (poner slotId a null)
             if (status === 'CANCELLED' && previousSlotId) {
-                updateData.slot = { disconnect: true };
+                updateData.slotId = null;
             } 
             // Si se cambia el slot y no se cancela, conectar el nuevo
             else if (slotId && status !== 'CANCELLED') {
@@ -446,9 +446,9 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
                 status,
             };
 
-            // Si se cancela, desconectar el slot
+            // Si se cancela, desconectar el slot (poner slotId a null)
             if (status === 'CANCELLED' && previousSlotId) {
-                updateData.slot = { disconnect: true };
+                updateData.slotId = null;
             } 
             // Si se cambia el slot y no se cancela, conectar el nuevo
             else if (slotId && status !== 'CANCELLED') {
@@ -543,23 +543,15 @@ router.delete("/deleteBirthdayBooking/:id", authenticateUser, async (req: any, r
         // ✅ Usar transacción para liberar el slot antes de eliminar
         await prisma.$transaction(async (tx) => {
             // Primero liberar y desconectar el slot si existe
-            if (existingBooking.slot) {
+            if (existingBooking.slotId && existingBooking.slot) {
                 // Liberar el slot (volver a OPEN)
                 await tx.birthdaySlot.update({
-                    where: { id: existingBooking.slot.id },
+                    where: { id: existingBooking.slotId },
                     data: { status: 'OPEN' }
-                });
-
-                // Desconectar el slot de la reserva antes de eliminar
-                await tx.birthdayBooking.update({
-                    where: { id: bookingId },
-                    data: {
-                        slot: { disconnect: true }
-                    }
                 });
             }
 
-            // Luego eliminar la reserva
+            // Luego eliminar la reserva (esto desconectará automáticamente el slot por la relación)
             await tx.birthdayBooking.delete({
                 where: { id: bookingId }
             });
