@@ -46,8 +46,12 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         }
 
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede reservar fechas pasadas)
-        const { getStartOfDay, getEndOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+        const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime } = await import("../utils/dateHelpers");
         const date = getStartOfDay(start);
+        
+        // Convertir la fecha a string YYYY-MM-DD para usar getDateRange (igual que en /available/date)
+        const dateString = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+        const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
         
         if (req.user.role !== 'ADMIN') {
             const now = getStartOfDay();
@@ -80,12 +84,7 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         const endHour = end.getHours();
         const expectedSlotsCount = endHour - startHour;
 
-        // Usar rango de fechas para evitar problemas de zona horaria
-        const startOfDay = getStartOfDay(start);
-        const endOfDay = getEndOfDay(start);
-
-        // Primero verificar si existen los slots (sin filtrar por plazas)
-        // Buscar slots que coincidan con la fecha (comparando solo día, mes y año)
+        // Usar la misma lógica que /available/date/:date que funciona correctamente
         const allSlots = await prisma.daycareSlot.findMany({
             where: {
                 date: {
@@ -110,7 +109,7 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
 
         if (allSlots.length !== expectedSlotsCount) {
             console.log(`[DEBUG] Slots encontrados: ${allSlots.length}, esperados: ${expectedSlotsCount}`);
-            console.log(`[DEBUG] Fecha buscada: ${date.toISOString()}, Rango: ${startOfDay.toISOString()} - ${endOfDay.toISOString()}`);
+            console.log(`[DEBUG] Fecha buscada: ${dateString}, Rango: ${startOfDay.toISOString()} - ${endOfDay.toISOString()}`);
             console.log(`[DEBUG] Horas buscadas: ${startHour} - ${endHour}`);
             console.log(`[DEBUG] Slots encontrados (OPEN):`, allSlots.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, status: s.status, availableSpots: s.availableSpots })));
             console.log(`[DEBUG] Todos los slots (sin filtrar status):`, allSlotsDebug.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, status: s.status, availableSpots: s.availableSpots })));
@@ -124,7 +123,7 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             }
             
             return res.status(400).json({ 
-                error: `No hay slots disponibles para el horario seleccionado (${startHour}:00 - ${endHour}:00). Faltan ${expectedSlotsCount - allSlots.length} slot(s).` 
+                error: `No hay slots disponibles para el horario seleccionado (${startHour}:00 - ${endHour}:00) el día ${dateString}. Faltan ${expectedSlotsCount - allSlots.length} slot(s).` 
             });
         }
 
@@ -318,8 +317,12 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         }
 
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede modificar a fechas pasadas)
-        const { getStartOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+        const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime } = await import("../utils/dateHelpers");
         const date = getStartOfDay(start);
+        
+        // Convertir la fecha a string YYYY-MM-DD para usar getDateRange (igual que en creación)
+        const dateString = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+        const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
 
         if (req.user.role !== 'ADMIN') {
             const now = getStartOfDay();
@@ -355,12 +358,7 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         const expectedSlotsCount = endHour - startHour;
         const spotsNeeded = childrenIds.length;
 
-        // Usar rango de fechas para evitar problemas de zona horaria
-        const { getEndOfDay } = await import("../utils/dateHelpers");
-        const startOfDay = getStartOfDay(start);
-        const endOfDay = getEndOfDay(start);
-
-        // Primero verificar si existen los slots (sin filtrar por plazas)
+        // Usar la misma lógica que /available/date/:date que funciona correctamente
         const allNewSlots = await prisma.daycareSlot.findMany({
             where: {
                 date: {
@@ -372,9 +370,34 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             },
         });
 
+        // También buscar sin filtrar por status para debug
+        const allNewSlotsDebug = await prisma.daycareSlot.findMany({
+            where: {
+                date: {
+                    gte: startOfDay,
+                    lte: endOfDay
+                },
+                hour: { gte: startHour, lt: endHour }
+            },
+        });
+
         if (allNewSlots.length !== expectedSlotsCount) {
+            console.log(`[DEBUG MODIFICAR] Slots encontrados: ${allNewSlots.length}, esperados: ${expectedSlotsCount}`);
+            console.log(`[DEBUG MODIFICAR] Fecha buscada: ${dateString}, Rango: ${startOfDay.toISOString()} - ${endOfDay.toISOString()}`);
+            console.log(`[DEBUG MODIFICAR] Horas buscadas: ${startHour} - ${endHour}`);
+            console.log(`[DEBUG MODIFICAR] Slots encontrados (OPEN):`, allNewSlots.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, status: s.status, availableSpots: s.availableSpots })));
+            console.log(`[DEBUG MODIFICAR] Todos los slots (sin filtrar status):`, allNewSlotsDebug.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, status: s.status, availableSpots: s.availableSpots })));
+            
+            // Si hay slots pero no están OPEN, informar
+            if (allNewSlotsDebug.length > 0 && allNewSlots.length < allNewSlotsDebug.length) {
+                const closedSlots = allNewSlotsDebug.filter(s => s.status !== 'OPEN');
+                return res.status(400).json({ 
+                    error: `Los slots para el horario seleccionado (${startHour}:00 - ${endHour}:00) no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).` 
+                });
+            }
+            
             return res.status(400).json({ 
-                error: `No hay slots disponibles para el horario seleccionado (${startHour}:00 - ${endHour}:00). Faltan ${expectedSlotsCount - allNewSlots.length} slot(s).` 
+                error: `No hay slots disponibles para el horario seleccionado (${startHour}:00 - ${endHour}:00) el día ${dateString}. Faltan ${expectedSlotsCount - allNewSlots.length} slot(s).` 
             });
         }
 
