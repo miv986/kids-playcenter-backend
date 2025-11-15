@@ -4,21 +4,12 @@ import {
     IsOptional,
     IsString,
     IsDateString,
-    Min,
     MaxLength,
     IsArray,
     ArrayMinSize,
 } from "class-validator";
 
 export class CreateDaycareBookingDTO {
-    @IsInt()
-    @IsNotEmpty({ message: "El ID del usuario es obligatorio." })
-    userId!: number;
-
-    @IsInt()
-    @IsNotEmpty({ message: "El ID del slot es obligatorio." })
-    slotId!: number;
-
     @IsArray()
     @ArrayMinSize(1, { message: "Debe haber al menos un hijo." })
     @IsInt({ each: true })

@@ -11,6 +11,7 @@ export class CreateBirthdayBookingDTO {
   @IsNotEmpty({ message: "guest es obligatorio" })
   guest!: string;
 
+  @IsOptional()
   @IsEmail({}, { message: "guestEmail debe ser un email válido" })
   @IsString({ message: "guestEmail debe ser un string" })
   guestEmail?: string;

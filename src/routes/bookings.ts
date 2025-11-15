@@ -1,5 +1,5 @@
 import express from "express";
-import { authenticateUser } from "../middleware/auth";
+import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import { validateDTO } from "../middleware/validation";
 import { CreateBirthdayBookingDTO } from "../dtos/CreateBirthdayBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
@@ -12,8 +12,16 @@ const router = express.Router();
 //
 
 //CREAR RESERVA CUMPLEAÑOS
-router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), async (req: any, res: any) => {
+router.post("/createBirthdayBooking", optionalAuthenticate, validateDTO(CreateBirthdayBookingDTO), async (req: any, res: any) => {
     const { guest, guestEmail, number_of_kids, contact_number, comments, slotId, packageType } = req.body;
+
+    // ✅ Si el usuario está logueado, usar su email; si no, requerir email en el body
+    let finalGuestEmail = guestEmail;
+    if (req.user && req.user.email) {
+        finalGuestEmail = req.user.email;
+    } else if (!guestEmail || guestEmail.trim() === '') {
+        return res.status(400).json({ error: "Debes proporcionar un email o estar logueado." });
+    }
 
     // ✅ Validaciones básicas antes de la transacción
     if (!slotId || isNaN(Number(slotId))) {
@@ -32,12 +40,10 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
         return res.status(400).json({ error: "Debes proporcionar un número de contacto." });
     }
 
-    // ✅ Validar formato de email si se proporciona
-    if (guestEmail && guestEmail.trim() !== '') {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(guestEmail.trim())) {
-            return res.status(400).json({ error: "El formato del email no es válido." });
-        }
+    // ✅ Validar formato de email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(finalGuestEmail.trim())) {
+        return res.status(400).json({ error: "El formato del email no es válido." });
     }
 
     try {
@@ -81,7 +87,7 @@ router.post("/createBirthdayBooking", validateDTO(CreateBirthdayBookingDTO), asy
             const booking = await tx.birthdayBooking.create({
                 data: {
                     guest: guest.trim(),
-                    guestEmail: guestEmail?.trim(),
+                    guestEmail: finalGuestEmail.trim(),
                     number_of_kids: number_of_kids,
                     contact_number: contact_number.trim(),
                     comments: comments?.trim(),
