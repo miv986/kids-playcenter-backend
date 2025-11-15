@@ -47,11 +47,20 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
 
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede reservar fechas pasadas)
         const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime } = await import("../utils/dateHelpers");
-        const date = getStartOfDay(start);
         
-        // Convertir la fecha a string YYYY-MM-DD para usar getDateRange (igual que en /available/date)
-        const dateString = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+        // Extraer la fecha local correctamente (usar métodos locales, no UTC)
+        // Esto asegura que si startTime viene en UTC, se convierta correctamente a la zona horaria local
+        const localYear = start.getFullYear();
+        const localMonth = start.getMonth() + 1;
+        const localDay = start.getDate();
+        const dateString = `${localYear}-${String(localMonth).padStart(2, '0')}-${String(localDay).padStart(2, '0')}`;
+        
+        console.log(`[DEBUG] startTime recibido: ${startTime}`);
+        console.log(`[DEBUG] start parseado: ${start.toISOString()}`);
+        console.log(`[DEBUG] Fecha local extraída: ${dateString} (año: ${localYear}, mes: ${localMonth}, día: ${localDay})`);
+        
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
+        const date = getStartOfDay(start);
         
         if (req.user.role !== 'ADMIN') {
             const now = getStartOfDay();
@@ -84,28 +93,42 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         const endHour = end.getHours();
         const expectedSlotsCount = endHour - startHour;
 
-        // Usar la misma lógica que /available/date/:date que funciona correctamente
-        const allSlots = await prisma.daycareSlot.findMany({
+        // Buscar slots de dos formas para debug:
+        // 1. Con rango de fechas (como /available/date)
+        // 2. Buscar todos los slots del día sin filtrar por hora primero
+        const allSlotsByDate = await prisma.daycareSlot.findMany({
             where: {
                 date: {
                     gte: startOfDay,
                     lte: endOfDay
-                },
-                hour: { gte: startHour, lt: endHour },
-                status: "OPEN"
+                }
             },
         });
 
-        // También buscar sin filtrar por status para debug
-        const allSlotsDebug = await prisma.daycareSlot.findMany({
-            where: {
-                date: {
-                    gte: startOfDay,
-                    lte: endOfDay
-                },
-                hour: { gte: startHour, lt: endHour }
-            },
-        });
+        console.log(`[DEBUG] Búsqueda de slots:`);
+        console.log(`[DEBUG] - Fecha string: ${dateString}`);
+        console.log(`[DEBUG] - Rango fecha: ${startOfDay.toISOString()} a ${endOfDay.toISOString()}`);
+        console.log(`[DEBUG] - Horas buscadas: ${startHour} a ${endHour}`);
+        console.log(`[DEBUG] - Todos los slots del día (sin filtrar hora): ${allSlotsByDate.length}`);
+        if (allSlotsByDate.length > 0) {
+            console.log(`[DEBUG] - Slots del día:`, allSlotsByDate.map(s => ({
+                id: s.id,
+                date: s.date.toISOString(),
+                dateLocal: s.date.toLocaleString('es-ES'),
+                hour: s.hour,
+                status: s.status,
+                availableSpots: s.availableSpots
+            })));
+        }
+
+        // Filtrar por hora y status
+        const allSlotsDebug = allSlotsByDate.filter(s => 
+            s.hour >= startHour && s.hour < endHour
+        );
+
+        console.log(`[DEBUG] - Slots en rango horario (sin filtrar status): ${allSlotsDebug.length}`);
+
+        const allSlots = allSlotsDebug.filter(s => s.status === "OPEN");
 
         if (allSlots.length !== expectedSlotsCount) {
             console.log(`[DEBUG] Slots encontrados: ${allSlots.length}, esperados: ${expectedSlotsCount}`);
@@ -318,11 +341,19 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
 
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede modificar a fechas pasadas)
         const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime } = await import("../utils/dateHelpers");
-        const date = getStartOfDay(start);
         
-        // Convertir la fecha a string YYYY-MM-DD para usar getDateRange (igual que en creación)
-        const dateString = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+        // Extraer la fecha local correctamente (usar métodos locales, no UTC)
+        const localYear = start.getFullYear();
+        const localMonth = start.getMonth() + 1;
+        const localDay = start.getDate();
+        const dateString = `${localYear}-${String(localMonth).padStart(2, '0')}-${String(localDay).padStart(2, '0')}`;
+        
+        console.log(`[DEBUG MODIFICAR] startTime recibido: ${startTime}`);
+        console.log(`[DEBUG MODIFICAR] start parseado: ${start.toISOString()}`);
+        console.log(`[DEBUG MODIFICAR] Fecha local extraída: ${dateString} (año: ${localYear}, mes: ${localMonth}, día: ${localDay})`);
+        
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
+        const date = getStartOfDay(start);
 
         if (req.user.role !== 'ADMIN') {
             const now = getStartOfDay();
