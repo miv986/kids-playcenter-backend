@@ -46,7 +46,7 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         }
 
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede reservar fechas pasadas)
-        const { getStartOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+        const { getStartOfDay, getEndOfDay, isToday, isPastDateTime } = await import("../utils/dateHelpers");
         const date = getStartOfDay(start);
         
         if (req.user.role !== 'ADMIN') {
@@ -78,21 +78,46 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
 
         const startHour = start.getHours();
         const endHour = end.getHours();
+        const expectedSlotsCount = endHour - startHour;
 
-        // Buscar slots de ese día dentro del rango horario
-        const slots = await prisma.daycareSlot.findMany({
+        // Usar rango de fechas para evitar problemas de zona horaria
+        const startOfDay = getStartOfDay(start);
+        const endOfDay = getEndOfDay(start);
+
+        // Primero verificar si existen los slots (sin filtrar por plazas)
+        const allSlots = await prisma.daycareSlot.findMany({
             where: {
-                date,
-                hour: { gte: startHour, lt: endHour }, // Ej: 17 <= h < 19
-                availableSpots: { gte: spotsToDiscount }, // Cada slot debe tener plazas suficientes para todos los niños
+                date: {
+                    gte: startOfDay,
+                    lte: endOfDay
+                },
+                hour: { gte: startHour, lt: endHour },
+                status: "OPEN"
             },
         });
 
-        if (slots.length !== endHour - startHour) {
-            return res
-                .status(400)
-                .json({ error: `No hay ${spotsToDiscount} plazas suficientes en los slots para ${spotsToDiscount} niño(s).` });
+        if (allSlots.length !== expectedSlotsCount) {
+            console.log(`[DEBUG] Slots encontrados: ${allSlots.length}, esperados: ${expectedSlotsCount}`);
+            console.log(`[DEBUG] Fecha buscada: ${date.toISOString()}, Rango: ${startOfDay.toISOString()} - ${endOfDay.toISOString()}`);
+            console.log(`[DEBUG] Horas buscadas: ${startHour} - ${endHour}`);
+            console.log(`[DEBUG] Slots encontrados:`, allSlots.map(s => ({ id: s.id, date: s.date.toISOString(), hour: s.hour, availableSpots: s.availableSpots })));
+            return res.status(400).json({ 
+                error: `No hay slots disponibles para el horario seleccionado (${startHour}:00 - ${endHour}:00). Faltan ${expectedSlotsCount - allSlots.length} slot(s).` 
+            });
         }
+
+        // Luego verificar que tengan plazas suficientes
+        const slotsWithSpots = allSlots.filter(slot => slot.availableSpots >= spotsToDiscount);
+        
+        if (slotsWithSpots.length !== expectedSlotsCount) {
+            const slotsWithoutSpots = allSlots.filter(slot => slot.availableSpots < spotsToDiscount);
+            const hoursWithoutSpots = slotsWithoutSpots.map(s => s.hour).join(", ");
+            return res.status(400).json({ 
+                error: `No hay suficientes plazas disponibles. Se necesitan ${spotsToDiscount} plaza(s) pero los slots de las ${hoursWithoutSpots}:00 no tienen suficientes plazas disponibles.` 
+            });
+        }
+
+        const slots = slotsWithSpots;
 
         // Verificar si el usuario ya tiene una reserva en alguno de estos slots
         const slotIds = slots.map(s => s.id);
@@ -305,20 +330,44 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
 
         const startHour = start.getHours();
         const endHour = end.getHours();
+        const expectedSlotsCount = endHour - startHour;
+        const spotsNeeded = childrenIds.length;
 
-        const newSlots = await prisma.daycareSlot.findMany({
+        // Usar rango de fechas para evitar problemas de zona horaria
+        const { getEndOfDay } = await import("../utils/dateHelpers");
+        const startOfDay = getStartOfDay(start);
+        const endOfDay = getEndOfDay(start);
+
+        // Primero verificar si existen los slots (sin filtrar por plazas)
+        const allNewSlots = await prisma.daycareSlot.findMany({
             where: {
-                date,
+                date: {
+                    gte: startOfDay,
+                    lte: endOfDay
+                },
                 hour: { gte: startHour, lt: endHour },
-                availableSpots: { gte: childrenIds.length }, // Cada slot debe tener plazas suficientes para todos los niños
+                status: "OPEN"
             },
         });
 
-        if (newSlots.length !== endHour - startHour) {
-            return res
-                .status(400)
-                .json({ error: `No hay ${childrenIds.length} plazas suficientes en los slots para ${childrenIds.length} niño(s).` });
+        if (allNewSlots.length !== expectedSlotsCount) {
+            return res.status(400).json({ 
+                error: `No hay slots disponibles para el horario seleccionado (${startHour}:00 - ${endHour}:00). Faltan ${expectedSlotsCount - allNewSlots.length} slot(s).` 
+            });
         }
+
+        // Luego verificar que tengan plazas suficientes
+        const newSlotsWithSpots = allNewSlots.filter(slot => slot.availableSpots >= spotsNeeded);
+        
+        if (newSlotsWithSpots.length !== expectedSlotsCount) {
+            const slotsWithoutSpots = allNewSlots.filter(slot => slot.availableSpots < spotsNeeded);
+            const hoursWithoutSpots = slotsWithoutSpots.map(s => s.hour).join(", ");
+            return res.status(400).json({ 
+                error: `No hay suficientes plazas disponibles. Se necesitan ${spotsNeeded} plaza(s) pero los slots de las ${hoursWithoutSpots}:00 no tienen suficientes plazas disponibles.` 
+            });
+        }
+
+        const newSlots = newSlotsWithSpots;
 
         // 🧩 Transacción segura para revertir si algo falla
         const updatedBooking = await prisma.$transaction(async (tx) => {

@@ -109,7 +109,7 @@ router.post("/createBirthdayBooking", optionalAuthenticate, validateDTO(CreateBi
         });
 
         // Enviar email de confirmación de reserva creada
-        if (guestEmail) {
+        if (finalGuestEmail) {
             try {
                 const emailData = getBirthdayBookingCreatedEmail(guest, {
                     id: addedBooking.id,
@@ -121,11 +121,11 @@ router.post("/createBirthdayBooking", optionalAuthenticate, validateDTO(CreateBi
                 });
 
                 await sendTemplatedEmail(
-                    guestEmail,
+                    finalGuestEmail,
                     "Reserva de cumpleaños recibida - Somriures & Colors",
                     emailData
                 );
-                console.log(`✅ Email de confirmación de reserva enviado a ${guestEmail}`);
+                console.log(`✅ Email de confirmación de reserva enviado a ${finalGuestEmail}`);
             } catch (emailError) {
                 console.error("Error enviando email de confirmación:", emailError);
                 // No fallar la creación si falla el email
@@ -293,24 +293,17 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
 
         // Usar transacción para asegurar atomicidad
         const updatedBooking = await prisma.$transaction(async (tx) => {
-            // Si la reserva se cancela, liberar el slot y desconectarlo (preservar historial)
+            // Si la reserva se cancela, liberar el slot y desconectarlo
             if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && previousSlotId) {
+                // Liberar el slot (volver a OPEN)
                 await tx.birthdaySlot.update({
                     where: { id: previousSlotId },
                     data: { status: 'OPEN' }
                 });
-
-                // Desconectar el slot de la reserva cancelada (preservar historial)
-                await tx.birthdayBooking.update({
-                    where: { id: bookingId },
-                    data: {
-                        slotId: null  // Desconectar pero mantener la reserva
-                    }
-                });
             }
 
-            // Si se cambió el slot, liberar el slot anterior
-            if (slotId && previousSlotId && Number(slotId) !== previousSlotId) {
+            // Si se cambió el slot (y no se está cancelando), liberar el anterior y cerrar el nuevo
+            if (slotId && previousSlotId && Number(slotId) !== previousSlotId && status !== 'CANCELLED') {
                 // Liberar el slot anterior (volver a OPEN)
                 await tx.birthdaySlot.update({
                     where: { id: previousSlotId },
@@ -325,16 +318,26 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
             }
 
             // Actualizar la reserva
+            const updateData: any = {
+                guest,
+                number_of_kids,
+                contact_number: phone,
+                comments,
+                status,
+            };
+
+            // Si se cancela, desconectar el slot
+            if (status === 'CANCELLED' && previousSlotId) {
+                updateData.slot = { disconnect: true };
+            } 
+            // Si se cambia el slot y no se cancela, conectar el nuevo
+            else if (slotId && status !== 'CANCELLED') {
+                updateData.slot = { connect: { id: Number(slotId) } };
+            }
+
             const booking = await tx.birthdayBooking.update({
                 where: { id: bookingId },
-                data: {
-                    guest,
-                    number_of_kids,
-                    contact_number: phone,
-                    comments,
-                    status,
-                    ...(slotId && { slot: { connect: { id: slotId } } }) // solo si cambias slot
-                },
+                data: updateData,
                 include: {
                     slot: true
                 }
@@ -416,24 +419,17 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
         }
 
         const updatedBooking = await prisma.$transaction(async (tx) => {
-            // Si la reserva se cancela, liberar el slot y desconectarlo (preservar historial)
+            // Si la reserva se cancela, liberar el slot y desconectarlo
             if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && previousSlotId) {
+                // Liberar el slot (volver a OPEN)
                 await tx.birthdaySlot.update({
                     where: { id: previousSlotId },
                     data: { status: 'OPEN' }
                 });
-
-                // Desconectar el slot de la reserva cancelada (preservar historial)
-                await tx.birthdayBooking.update({
-                    where: { id: bookingId },
-                    data: {
-                        slotId: null  // Desconectar pero mantener la reserva
-                    }
-                });
             }
 
-            // Si se cambió el slot, liberar el slot anterior y cerrar el nuevo
-            if (slotId && previousSlotId && Number(slotId) !== previousSlotId) {
+            // Si se cambió el slot (y no se está cancelando), liberar el anterior y cerrar el nuevo
+            if (slotId && previousSlotId && Number(slotId) !== previousSlotId && status !== 'CANCELLED') {
                 await tx.birthdaySlot.update({
                     where: { id: previousSlotId },
                     data: { status: 'OPEN' }
@@ -445,12 +441,23 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
                 });
             }
 
+            // Preparar datos de actualización
+            const updateData: any = {
+                status,
+            };
+
+            // Si se cancela, desconectar el slot
+            if (status === 'CANCELLED' && previousSlotId) {
+                updateData.slot = { disconnect: true };
+            } 
+            // Si se cambia el slot y no se cancela, conectar el nuevo
+            else if (slotId && status !== 'CANCELLED') {
+                updateData.slot = { connect: { id: Number(slotId) } };
+            }
+
             const booking = await tx.birthdayBooking.update({
                 where: { id: bookingId },
-                data: {
-                    status,
-                    ...(slotId && { slot: { connect: { id: slotId } } }) // solo si cambias slot
-                },
+                data: updateData,
                 include: {
                     slot: true
                 }
@@ -533,20 +540,29 @@ router.delete("/deleteBirthdayBooking/:id", authenticateUser, async (req: any, r
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
 
-        // ✅ Usar transacción para actualizar el slot si es necesario
+        // ✅ Usar transacción para liberar el slot antes de eliminar
         await prisma.$transaction(async (tx) => {
-            // Eliminar la reserva
-            await tx.birthdayBooking.delete({
-                where: { id: bookingId }
-            });
-
-            // Liberar el slot (volver a OPEN si estaba CLOSED)
-            if (existingBooking.slot && existingBooking.slot.status === 'CLOSED') {
+            // Primero liberar y desconectar el slot si existe
+            if (existingBooking.slot) {
+                // Liberar el slot (volver a OPEN)
                 await tx.birthdaySlot.update({
                     where: { id: existingBooking.slot.id },
                     data: { status: 'OPEN' }
                 });
+
+                // Desconectar el slot de la reserva antes de eliminar
+                await tx.birthdayBooking.update({
+                    where: { id: bookingId },
+                    data: {
+                        slot: { disconnect: true }
+                    }
+                });
             }
+
+            // Luego eliminar la reserva
+            await tx.birthdayBooking.delete({
+                where: { id: bookingId }
+            });
         });
 
         res.json({ message: "Reserva eliminada correctamente" });
