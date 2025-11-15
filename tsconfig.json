@@ -13,6 +13,7 @@
     "rootDir": "./src",
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["node"]
+    "types": ["node"],
+    "resolveJsonModule": true
   }
 }
