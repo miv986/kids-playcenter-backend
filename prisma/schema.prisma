@@ -86,19 +86,19 @@ model DaycareSlot {
 }
 
 model BirthdayBooking {
-  id                   Int           @id @default(autoincrement())
-  guest                String
-  number_of_kids       Int
-  contact_number       String
-  comments             String?
-  packageType          Package?
-  status               Status        @default(PENDING)
-  slotId               Int?          @unique
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
-  guestEmail           String
-  slot                 BirthdaySlot? @relation(fields: [slotId], references: [id], onDelete: Cascade)
-  
+  id             Int           @id @default(autoincrement())
+  guest          String
+  number_of_kids Int
+  contact_number String
+  comments       String?
+  packageType    Package?
+  status         Status        @default(PENDING)
+  slotId         Int?          @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  guestEmail     String
+  slot           BirthdaySlot? @relation(fields: [slotId], references: [id], onDelete: Cascade)
+
   // Campos para guardar la fecha original del slot cuando se cancela (histórico)
   originalSlotDate      DateTime?
   originalSlotStartTime DateTime?
