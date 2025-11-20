@@ -7,6 +7,47 @@ export interface EmailTemplateData {
     footerMessage?: string;
 }
 
+/**
+ * Formatea una fecha a hora local (HH:MM) en zona horaria de Madrid
+ * Solución estándar para emails de negocios locales: muestra la hora del negocio
+ * con la zona horaria indicada para claridad internacional.
+ * 
+ * Nota: Los emails HTML estáticos no pueden detectar la zona horaria del destinatario
+ * automáticamente (JavaScript está bloqueado en la mayoría de clientes de email).
+ * Esta es la práctica estándar usada por servicios como restaurantes, eventos, etc.
+ */
+function formatTime(date: Date): string {
+    const time = date.toLocaleTimeString('es-ES', { 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        timeZone: 'Europe/Madrid',
+        hour12: false 
+    });
+    
+    // Obtener la zona horaria (CET en invierno, CEST en verano)
+    const formatter = new Intl.DateTimeFormat('es-ES', {
+        timeZone: 'Europe/Madrid',
+        timeZoneName: 'short'
+    });
+    const parts = formatter.formatToParts(date);
+    const timeZoneName = parts.find(part => part.type === 'timeZoneName')?.value || 'CET';
+    
+    return `${time} (${timeZoneName})`;
+}
+
+/**
+ * Formatea una fecha a formato de fecha local sin mostrar zona horaria
+ */
+function formatDate(date: Date): string {
+    return date.toLocaleDateString('es-ES', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        timeZone: 'Europe/Madrid' 
+    });
+}
+
 export function getEmailTemplate(data: EmailTemplateData): string {
     // Variables de entorno (sin valores por defecto)
     const frontendUrl = process.env.FRONTEND_URL || process.env.WEBSITE_URL;
@@ -193,8 +234,8 @@ export function getBirthdayBookingCreatedEmail(
     };
 
     const details = [
-        { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-        { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+        { label: "Fecha", value: formatDate(booking.date) },
+        { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
         { label: "Número de niños", value: booking.number_of_kids.toString() },
         { label: "Teléfono de contacto", value: booking.contact_number },
         { label: "Estado", value: "Pendiente de confirmación" }
@@ -238,8 +279,8 @@ export function getBirthdayBookingConfirmedEmail(
     };
 
     const details = [
-        { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-        { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+        { label: "Fecha", value: formatDate(booking.date) },
+        { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
         { label: "Número de niños", value: booking.number_of_kids.toString() },
         { label: "Teléfono de contacto", value: booking.contact_number },
         { label: "Estado", value: "Confirmada" }
@@ -284,8 +325,8 @@ export function getBirthdayBookingModifiedEmail(
     };
 
     const details = [
-        { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-        { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+        { label: "Fecha", value: formatDate(booking.date) },
+        { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
         { label: "Número de niños", value: booking.number_of_kids.toString() },
         { label: "Teléfono de contacto", value: booking.contact_number }
     ];
@@ -333,8 +374,8 @@ export function getDaycareBookingConfirmedEmail(
             <p>Aquí tienes los detalles de tu reserva:</p>
         `,
         details: [
-            { label: "Fecha", value: booking.startTime.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Fecha", value: formatDate(booking.startTime) },
+            { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
             { label: "Niños", value: childrenNames },
             { label: "Estado", value: "Confirmada" }
         ],
@@ -395,8 +436,8 @@ export function getDaycareBookingStatusChangedEmail(
             <p>Detalles de la reserva:</p>
         `,
         details: [
-            { label: "Fecha", value: booking.startTime.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Fecha", value: formatDate(booking.startTime) },
+            { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
             { label: "Niños", value: childrenNames },
             { label: "Estado", value: booking.status }
         ],
@@ -428,8 +469,8 @@ export function getBirthdayBookingCancelledEmail(
             <p><strong>Si deseas realizar una nueva reserva, deberás empezar de nuevo</strong> desde nuestro sitio web.</p>
         `,
         details: [
-            { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Fecha", value: formatDate(booking.date) },
+            { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
             { label: "Niños", value: booking.number_of_kids.toString() },
             { label: "Estado", value: "Cancelada" }
         ],
@@ -462,8 +503,8 @@ export function getBirthdayBookingCancelledEmailWithoutSlot(
         `,
         details: [
             { label: "ID de reserva", value: `#${bookingId}` },
-            { label: "Fecha original", value: slotInfo.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
-            { label: "Horario original", value: `${slotInfo.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${slotInfo.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Fecha original", value: formatDate(slotInfo.date) },
+            { label: "Horario original", value: `${formatTime(slotInfo.startTime)} - ${formatTime(slotInfo.endTime)}` },
             { label: "Nombre", value: slotInfo.name },
             { label: "Niños", value: slotInfo.number_of_kids.toString() },
             { label: "Contacto", value: slotInfo.contact_number },
