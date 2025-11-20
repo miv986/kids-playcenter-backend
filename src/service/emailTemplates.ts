@@ -257,7 +257,56 @@ export function getBirthdayBookingConfirmedEmail(
             <p>Estamos emocionados de celebrar contigo. A continuación encontrarás todos los detalles de tu reserva:</p>
         `,
         details,
-        footerMessage: "Si tienes alguna pregunta o necesitas modificar tu reserva, no dudes en contactarnos."
+        footerMessage: "Si tienes alguna pregunta o necesitas modificar tu reserva, no dudes en contactarnos. Recuerda que debes pasar en los próximos 3 días a dejar una señal de pago para confirmar tu reserva."
+    };
+}
+
+/**
+ * Email de notificación de modificación de reserva de cumpleaños
+ */
+export function getBirthdayBookingModifiedEmail(
+    guestName: string,
+    booking: {
+        id: number;
+        date: Date;
+        startTime: Date;
+        endTime: Date;
+        packageType?: string;
+        number_of_kids: number;
+        contact_number: string;
+        status?: string;
+    }
+): EmailTemplateData {
+    const packageNames: Record<string, string> = {
+        'ALEGRIA': 'Pack Alegría',
+        'FIESTA': 'Pack Fiesta',
+        'ESPECIAL': 'Pack Especial'
+    };
+
+    const details = [
+        { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
+        { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+        { label: "Número de niños", value: booking.number_of_kids.toString() },
+        { label: "Teléfono de contacto", value: booking.contact_number }
+    ];
+
+    if (booking.packageType) {
+        details.splice(2, 0, { label: "Pack", value: packageNames[booking.packageType] || booking.packageType });
+    }
+
+    if (booking.status) {
+        details.push({ label: "Estado", value: booking.status });
+    }
+
+    return {
+        title: "Reserva de cumpleaños modificada",
+        greeting: `Hola ${guestName}`,
+        content: `
+            <p>Te informamos que tu reserva de cumpleaños ha sido <strong>modificada</strong>.</p>
+            <p>A continuación encontrarás los <strong>nuevos detalles actualizados</strong> de tu reserva:</p>
+        `,
+        details,
+        footerMessage: "Si tienes alguna pregunta sobre los cambios realizados o necesitas hacer alguna modificación adicional, no dudes en contactarnos."
     };
 }
 
@@ -367,6 +416,7 @@ export function getBirthdayBookingCancelledEmail(
         date: Date;
         startTime: Date;
         endTime: Date;
+        number_of_kids: number;
     }
 ): EmailTemplateData {
     return {
@@ -375,13 +425,73 @@ export function getBirthdayBookingCancelledEmail(
         content: `
             <p>Te informamos que tu reserva de cumpleaños ha sido <strong>cancelada</strong>.</p>
             <p>Detalles de la reserva cancelada:</p>
+            <p><strong>Si deseas realizar una nueva reserva, deberás empezar de nuevo</strong> desde nuestro sitio web.</p>
         `,
         details: [
             { label: "Fecha", value: booking.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
             { label: "Horario", value: `${booking.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${booking.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Niños", value: booking.number_of_kids.toString() },
             { label: "Estado", value: "Cancelada" }
         ],
-        footerMessage: "Si necesitas hacer una nueva reserva, puedes hacerlo desde nuestro sitio web."
+        footerMessage: "Si necesitas hacer una nueva reserva, puedes hacerlo desde nuestro sitio web. Deberás completar todo el proceso de reserva nuevamente."
+    };
+}
+
+/**
+ * Email de reserva de cumpleaños cancelada sin slot (con información guardada)
+ */
+export function getBirthdayBookingCancelledEmailWithoutSlot(
+    guestName: string,
+    bookingId: number,
+    slotInfo: {
+        date: Date;
+        startTime: Date;
+        endTime: Date;
+        name: string;
+        number_of_kids: number;
+        contact_number: string;
+    }
+): EmailTemplateData {
+    return {
+        title: "Reserva de cumpleaños cancelada",
+        greeting: `Hola ${slotInfo.name}`,
+        content: `
+            <p>Te informamos que tu reserva de cumpleaños <strong>#${bookingId}</strong> ha sido <strong>cancelada</strong>.</p>
+            <p>Detalles de la reserva cancelada:</p>
+            <p>Si deseas realizar una nueva reserva, deberás <strong>empezar de nuevo</strong> desde nuestro sitio web.</p>
+        `,
+        details: [
+            { label: "ID de reserva", value: `#${bookingId}` },
+            { label: "Fecha original", value: slotInfo.date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
+            { label: "Horario original", value: `${slotInfo.startTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} - ${slotInfo.endTime.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}` },
+            { label: "Nombre", value: slotInfo.name },
+            { label: "Niños", value: slotInfo.number_of_kids.toString() },
+            { label: "Contacto", value: slotInfo.contact_number },
+            { label: "Estado", value: "Cancelada" }
+        ],
+        footerMessage: "Si necesitas hacer una nueva reserva, puedes hacerlo desde nuestro sitio web. Deberás completar todo el proceso de reserva nuevamente."
+    };
+}
+
+/**
+ * Email de reserva de cumpleaños cancelada (caso extremo sin información)
+ */
+export function getBirthdayBookingCancelledEmailMinimal(
+    guestName: string,
+    bookingId: number
+): EmailTemplateData {
+    return {
+        title: "Reserva de cumpleaños cancelada",
+        greeting: `Hola ${guestName}`,
+        content: `
+            <p>Te informamos que tu reserva de cumpleaños <strong>#${bookingId}</strong> ha sido <strong>cancelada</strong>.</p>
+            <p>Si deseas realizar una nueva reserva, deberás <strong>empezar de nuevo</strong> desde nuestro sitio web.</p>
+        `,
+        details: [
+            { label: "ID de reserva", value: `#${bookingId}` },
+            { label: "Estado", value: "Cancelada" }
+        ],
+        footerMessage: "Si necesitas hacer una nueva reserva, puedes hacerlo desde nuestro sitio web. Deberás completar todo el proceso de reserva nuevamente."
     };
 }
 

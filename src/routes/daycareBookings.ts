@@ -102,16 +102,18 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         // Usar retry logic para manejar conflictos de serialización automáticamente
         const booking = await executeWithRetry(() => prisma.$transaction(async (tx) => {
             // ✅ Validar slots DENTRO de la transacción (previene race conditions)
-            // Usar openHour y closeHour (DateTime) para comparar directamente con startTime y endTime
+            // Filtrar por rango de horas para encontrar los slots exactos necesarios
             const allSlotsByDate = await tx.daycareSlot.findMany({
                 where: {
                     date: {
                         gte: startOfDay,
                         lte: endOfDay
                     },
-                    // El slot debe solaparse con el rango solicitado
-                    openHour: { lte: end },
-                    closeHour: { gte: start }
+                    // Filtrar por rango de horas: desde startHour hasta endHour (exclusivo)
+                    hour: {
+                        gte: startHour,
+                        lt: endHour
+                    }
                 },
             });
 
@@ -401,15 +403,18 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         // Usar retry logic para manejar conflictos de serialización automáticamente
         const updatedBooking = await executeWithRetry(() => prisma.$transaction(async (tx) => {
             // ✅ Validar slots nuevos DENTRO de la transacción (previene race conditions)
+            // Filtrar por rango de horas para encontrar los slots exactos necesarios
             const allNewSlotsByDate = await tx.daycareSlot.findMany({
                 where: {
                     date: {
                         gte: startOfDay,
                         lte: endOfDay
                     },
-                    // El slot debe solaparse con el rango solicitado
-                    openHour: { lte: end },
-                    closeHour: { gte: start }
+                    // Filtrar por rango de horas: desde startHour hasta endHour (exclusivo)
+                    hour: {
+                        gte: startHour,
+                        lt: endHour
+                    }
                 },
             });
 

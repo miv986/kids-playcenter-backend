@@ -3,7 +3,7 @@ import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import { validateDTO } from "../middleware/validation";
 import { CreateBirthdayBookingDTO } from "../dtos/CreateBirthdayBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
-import { getBirthdayBookingCreatedEmail, getBirthdayBookingConfirmedEmail, getBirthdayBookingCancelledEmail } from "../service/emailTemplates";
+import { getBirthdayBookingCreatedEmail, getBirthdayBookingConfirmedEmail, getBirthdayBookingCancelledEmail, getBirthdayBookingCancelledEmailWithoutSlot, getBirthdayBookingCancelledEmailMinimal, getBirthdayBookingModifiedEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
 import { executeWithRetry } from "../utils/transactionRetry";
 const router = express.Router();
@@ -224,13 +224,33 @@ router.get("/getBirthdayBooking/by-date/:date", authenticateUser, async (req: an
     }
 
     try {
+        // Buscar reservas que tengan slot en esa fecha O que no tengan slot (reservas canceladas)
+        // Para las canceladas sin slot, usamos la fecha de creación como referencia aproximada
         const bookings = await prisma.birthdayBooking.findMany({
             where: {
-                slot: {
-                    startTime: { gte: startOfDay, lte: endOfDay }
-                }
+                OR: [
+                    // Reservas con slot en la fecha especificada
+                    {
+                        slot: {
+                            startTime: { gte: startOfDay, lte: endOfDay }
+                        }
+                    },
+                    // Reservas sin slot (canceladas) creadas en esa fecha (para mantenerlas visibles)
+                    {
+                        AND: [
+                            { slotId: null },
+                            {
+                                createdAt: {
+                                    gte: startOfDay,
+                                    lte: endOfDay
+                                }
+                            }
+                        ]
+                    }
+                ]
             },
-            include: { slot: true }
+            include: { slot: true },
+            orderBy: { createdAt: 'desc' }
         });
 
         res.json(bookings);
@@ -336,8 +356,14 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
                 status,
             };
 
-            // Si se cancela, desconectar el slot (poner slotId a null)
-            if (status === 'CANCELLED' && previousSlotId) {
+            // Si se cancela, guardar la fecha original del slot y desconectar el slot
+            if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && existingBooking.slot) {
+                updateData.slotId = null;
+                // Guardar la fecha original del slot para histórico
+                updateData.originalSlotDate = existingBooking.slot.date;
+                updateData.originalSlotStartTime = existingBooking.slot.startTime;
+                updateData.originalSlotEndTime = existingBooking.slot.endTime;
+            } else if (status === 'CANCELLED' && previousSlotId) {
                 updateData.slotId = null;
             } 
             // Si se cambia el slot y no se cancela, conectar el nuevo
@@ -358,6 +384,42 @@ router.put("/updateBirthdayBooking/:id", authenticateUser, async (req: any, res:
             isolationLevel: 'Serializable', // Máxima protección contra race conditions
             timeout: 10000 // 10 segundos timeout
         }));
+
+        // Enviar email de modificación si se modificó algo y no se canceló
+        if (status !== 'CANCELLED' && previousStatus !== 'CANCELLED' && existingBooking.guestEmail) {
+            // Verificar si realmente hubo cambios (excepto status que no cambió a CANCELLED)
+            const hasChanges = guest !== undefined || number_of_kids !== undefined || 
+                              phone !== undefined || comments !== undefined || 
+                              (slotId && Number(slotId) !== previousSlotId);
+            
+            if (hasChanges) {
+                try {
+                    const slot = updatedBooking.slot || existingBooking.slot;
+                    if (slot) {
+                        const emailData = getBirthdayBookingModifiedEmail(existingBooking.guest, {
+                            id: updatedBooking.id,
+                            date: slot.date,
+                            startTime: slot.startTime,
+                            endTime: slot.endTime,
+                            packageType: updatedBooking.packageType,
+                            number_of_kids: updatedBooking.number_of_kids,
+                            contact_number: updatedBooking.contact_number,
+                            status: updatedBooking.status
+                        });
+
+                        await sendTemplatedEmail(
+                            existingBooking.guestEmail,
+                            "Reserva de cumpleaños modificada - Somriures & Colors",
+                            emailData
+                        );
+                        console.log(`✅ Email de modificación enviado a ${existingBooking.guestEmail}`);
+                    }
+                } catch (emailError) {
+                    console.error("Error enviando email de modificación:", emailError);
+                    // No fallar la actualización si falla el email
+                }
+            }
+        }
 
         res.json(updatedBooking);
     } catch (err: any) {
@@ -414,6 +476,13 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
         const previousStatus = existingBooking.status;
         const previousSlotId = existingBooking.slotId;
 
+        // Validar que la reserva tenga slot asociado (excepto si se está cancelando)
+        if (!existingBooking.slot && status !== 'CANCELLED') {
+            return res.status(400).json({ 
+                error: "Esta reserva no tiene slot asociado. Solo se puede cancelar." 
+            });
+        }
+
         // Validar slot si se quiere cambiar
         if (slotId) {
             if (isNaN(Number(slotId)) || Number(slotId) <= 0) {
@@ -434,6 +503,32 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
             // Permitir slots OPEN o slots con reservas canceladas
             if (slot.status !== "OPEN" && (!slot.booking || slot.booking.status !== 'CANCELLED')) {
                 return res.status(400).json({ error: "Este slot no está disponible" });
+            }
+        }
+
+        // Guardar información del slot y reserva antes de cancelar (para el email)
+        let slotInfoForEmail: { date: Date; startTime: Date; endTime: Date; name: string, number_of_kids: number, contact_number: string } | null = null;
+        if (status === 'CANCELLED' && previousStatus !== 'CANCELLED') {
+            if (existingBooking.slot) {
+                // Si hay slot, guardar toda la información del slot
+                slotInfoForEmail = {
+                    date: existingBooking.slot.date,
+                    startTime: existingBooking.slot.startTime,
+                    endTime: existingBooking.slot.endTime,
+                    name: existingBooking.guest,
+                    number_of_kids: existingBooking.number_of_kids,
+                    contact_number: existingBooking.contact_number
+                };
+            } else {
+                // Si no hay slot, usar fecha de creación como referencia
+                slotInfoForEmail = {
+                    date: new Date(existingBooking.createdAt || new Date()),
+                    startTime: new Date(existingBooking.createdAt || new Date()),
+                    endTime: new Date(existingBooking.createdAt || new Date()),
+                    name: existingBooking.guest,
+                    number_of_kids: existingBooking.number_of_kids,
+                    contact_number: existingBooking.contact_number
+                };
             }
         }
 
@@ -465,8 +560,14 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
                 status,
             };
 
-            // Si se cancela, desconectar el slot (poner slotId a null)
-            if (status === 'CANCELLED' && previousSlotId) {
+            // Si se cancela, guardar la fecha original del slot y desconectar el slot
+            if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && existingBooking.slot) {
+                updateData.slotId = null;
+                // Guardar la fecha original del slot para histórico
+                updateData.originalSlotDate = existingBooking.slot.date;
+                updateData.originalSlotStartTime = existingBooking.slot.startTime;
+                updateData.originalSlotEndTime = existingBooking.slot.endTime;
+            } else if (status === 'CANCELLED' && previousSlotId) {
                 updateData.slotId = null;
             } 
             // Si se cambia el slot y no se cancela, conectar el nuevo
@@ -488,15 +589,63 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
             timeout: 10000 // 10 segundos timeout
         }));
 
-        // Enviar email según el cambio de estado
-        if (existingBooking.guestEmail && status && status !== previousStatus) {
+        // Enviar email de cancelación DESPUÉS de cancelar (usando datos guardados)
+        if (status === 'CANCELLED' && previousStatus !== 'CANCELLED' && existingBooking.guestEmail) {
             try {
-                if (status === 'CONFIRMED') {
+                let emailData;
+                
+                if (slotInfoForEmail) {
+                    // Usar la información del slot guardada antes de cancelar (siempre tiene la fecha original)
+                    if (existingBooking.slot) {
+                        // Si tenía slot original, usar la función del template
+                        emailData = getBirthdayBookingCancelledEmail(existingBooking.guest, {
+                            id: updatedBooking.id,
+                            date: slotInfoForEmail.date,
+                            startTime: slotInfoForEmail.startTime,
+                            endTime: slotInfoForEmail.endTime,
+                            number_of_kids: existingBooking.number_of_kids
+                        });
+                    } else {
+                        // Si no tenía slot, usar la función del template sin slot
+                        emailData = getBirthdayBookingCancelledEmailWithoutSlot(
+                            existingBooking.guest,
+                            updatedBooking.id,
+                            slotInfoForEmail
+                        );
+                    }
+                } else {
+                    // Email básico de cancelación sin información (caso extremo)
+                    emailData = getBirthdayBookingCancelledEmailMinimal(
+                        existingBooking.guest,
+                        updatedBooking.id
+                    );
+                }
+
+                await sendTemplatedEmail(
+                    existingBooking.guestEmail,
+                    "Reserva de cumpleaños cancelada - Somriures & Colors",
+                    emailData
+                );
+                console.log(`✅ Email de cancelación enviado a ${existingBooking.guestEmail}`);
+            } catch (emailError) {
+                console.error("Error enviando email de cancelación:", emailError);
+                // No fallar la actualización si falla el email
+            }
+        }
+
+        // Enviar email de confirmación
+        if (status === 'CONFIRMED' && previousStatus !== 'CONFIRMED' && existingBooking.guestEmail) {
+            try {
+                // Usar existingBooking.slot si updatedBooking.slot es null (por seguridad)
+                const slot = updatedBooking.slot || existingBooking.slot;
+                if (!slot) {
+                    console.error(`⚠️ No se puede enviar email de confirmación: reserva ${updatedBooking.id} no tiene slot asociado`);
+                } else {
                     const emailData = getBirthdayBookingConfirmedEmail(existingBooking.guest, {
                         id: updatedBooking.id,
-                        date: updatedBooking.slot.date,
-                        startTime: updatedBooking.slot.startTime,
-                        endTime: updatedBooking.slot.endTime,
+                        date: slot.date,
+                        startTime: slot.startTime,
+                        endTime: slot.endTime,
                         number_of_kids: updatedBooking.number_of_kids,
                         contact_number: updatedBooking.contact_number
                     });
@@ -507,23 +656,40 @@ router.put("/updateBirthdayBookingStatus/:id", authenticateUser, async (req: any
                         emailData
                     );
                     console.log(`✅ Email de confirmación enviado a ${existingBooking.guestEmail}`);
-                } else if (status === 'CANCELLED') {
-                    const emailData = getBirthdayBookingCancelledEmail(existingBooking.guest, {
+                }
+            } catch (emailError) {
+                console.error("Error enviando email de confirmación:", emailError);
+                // No fallar la actualización si falla el email
+            }
+        }
+
+        // Enviar email de modificación si se cambió el slot pero no se canceló ni confirmó
+        if (status !== 'CANCELLED' && previousStatus !== 'CANCELLED' && 
+            status !== 'CONFIRMED' && previousStatus !== 'CONFIRMED' &&
+            slotId && Number(slotId) !== previousSlotId && existingBooking.guestEmail) {
+            try {
+                const slot = updatedBooking.slot || existingBooking.slot;
+                if (slot) {
+                    const emailData = getBirthdayBookingModifiedEmail(existingBooking.guest, {
                         id: updatedBooking.id,
-                        date: updatedBooking.slot.date,
-                        startTime: updatedBooking.slot.startTime,
-                        endTime: updatedBooking.slot.endTime
+                        date: slot.date,
+                        startTime: slot.startTime,
+                        endTime: slot.endTime,
+                        packageType: updatedBooking.packageType,
+                        number_of_kids: updatedBooking.number_of_kids,
+                        contact_number: updatedBooking.contact_number,
+                        status: updatedBooking.status
                     });
 
                     await sendTemplatedEmail(
                         existingBooking.guestEmail,
-                        "Reserva de cumpleaños cancelada - Somriures & Colors",
+                        "Reserva de cumpleaños modificada - Somriures & Colors",
                         emailData
                     );
-                    console.log(`✅ Email de cancelación enviado a ${existingBooking.guestEmail}`);
+                    console.log(`✅ Email de modificación enviado a ${existingBooking.guestEmail}`);
                 }
             } catch (emailError) {
-                console.error("Error enviando email de cambio de estado:", emailError);
+                console.error("Error enviando email de modificación:", emailError);
                 // No fallar la actualización si falla el email
             }
         }

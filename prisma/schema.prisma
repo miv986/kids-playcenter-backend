@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,17 +11,154 @@ model RefreshToken {
   id        Int      @id @default(autoincrement())
   token     String   @unique
   userId    Int
-  user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
   expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id])
 }
 
+model User {
+  id                       Int              @id @default(autoincrement())
+  name                     String
+  surname                  String
+  email                    String?          @unique
+  phone_number             String?
+  role                     Role             @default(USER)
+  password                 String?
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
+  emailVerifyToken         String?
+  isEmailVerified          Boolean          @default(false)
+  allergies                String?
+  dateOfBirth              DateTime?
+  emergency_contact_name_1 String?
+  emergency_contact_name_2 String?
+  medicalNotes             String?
+  notes                    String?
+  emergency_phone_1        String?
+  emergency_phone_2        String?
+  tutorId                  Int?
+  adminNotesCreated        ChildNote[]      @relation("AdminNotes")
+  childNotesReceived       ChildNote[]      @relation("ChildNotes")
+  bookings                 DaycareBooking[]
+  refreshTokens            RefreshToken[]
+  tutor                    User?            @relation("TutorChildren", fields: [tutorId], references: [id])
+  children                 User[]           @relation("TutorChildren")
+  daycareBookings          DaycareBooking[] @relation("DaycareBookingChildren")
+}
 
-// Enum para el rol del usuario
+model DaycareBooking {
+  id               Int              @id @default(autoincrement())
+  comments         String?
+  status           Status           @default(PENDING)
+  startTime        DateTime
+  endTime          DateTime
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  userId           Int
+  attendanceStatus AttendanceStatus @default(PENDING)
+  user             User             @relation(fields: [userId], references: [id])
+  children         User[]           @relation("DaycareBookingChildren")
+  slots            DaycareSlot[]    @relation("DaycareSlotBookings")
+
+  @@index([userId, status])
+  @@index([startTime, endTime])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model DaycareSlot {
+  id             Int              @id @default(autoincrement())
+  date           DateTime
+  capacity       Int
+  availableSpots Int
+  status         Status           @default(OPEN)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  hour           Int
+  closeHour      DateTime
+  openHour       DateTime
+  bookings       DaycareBooking[] @relation("DaycareSlotBookings")
+
+  @@index([date, hour])
+  @@index([date, status])
+  @@index([openHour, closeHour])
+  @@index([status])
+}
+
+model BirthdayBooking {
+  id                   Int           @id @default(autoincrement())
+  guest                String
+  number_of_kids       Int
+  contact_number       String
+  comments             String?
+  packageType          Package?
+  status               Status        @default(PENDING)
+  slotId               Int?          @unique
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  guestEmail           String
+  slot                 BirthdaySlot? @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  
+  // Campos para guardar la fecha original del slot cuando se cancela (histórico)
+  originalSlotDate      DateTime?
+  originalSlotStartTime DateTime?
+  originalSlotEndTime   DateTime?
+
+  @@index([status])
+  @@index([guestEmail])
+  @@index([createdAt])
+}
+
+model BirthdaySlot {
+  id        Int              @id @default(autoincrement())
+  date      DateTime
+  startTime DateTime
+  endTime   DateTime
+  status    Status           @default(CLOSED)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  booking   BirthdayBooking?
+
+  @@index([date])
+  @@index([startTime, endTime])
+  @@index([status])
+}
+
+model BirthdayPackage {
+  id             Int      @id @default(autoincrement())
+  name           String
+  type           Package  @unique
+  duration       String
+  price          String
+  priceValue     Int
+  isPopular      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  featuresEs     String[]
+  featuresVa     String[]
+  perChildTextEs String?
+  perChildTextVa String?
+}
+
+model ChildNote {
+  id        Int      @id @default(autoincrement())
+  childId   Int
+  adminId   Int
+  content   String
+  images    String[]
+  noteDate  DateTime @default(now())
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  admin     User     @relation("AdminNotes", fields: [adminId], references: [id])
+  child     User     @relation("ChildNotes", fields: [childId], references: [id], onDelete: Cascade)
+}
+
 enum Role {
   USER
-  CHILD
   ADMIN
+  CHILD
 }
 
 enum Status {
@@ -46,190 +180,3 @@ enum Package {
   FIESTA
   ESPECIAL
 }
-
-// Tabla de usuarios
-model User {
-  id             Int       @id @default(autoincrement())
-  name           String
-  surname        String
-  email          String?    @unique
-  phone_number   String?
-  emergency_phone_1  String?   // primer teléfono de emergencia
-  emergency_contact_name_1 String?
-  emergency_phone_2  String?   // segundo teléfono de emergencia
-  emergency_contact_name_2 String?
-  role           Role      @default(USER)
-  password       String?
-  isEmailVerified Boolean  @default(false) // <-- campo para verificación de email
-  emailVerifyToken String? // <-- token temporal para confirmar email
-  notes              String?
-  dateOfBirth        DateTime? // útil para hijos
-  allergies          String?
-  medicalNotes       String?
-
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  //Relación con bookings
-  bookings       DaycareBooking[] // Relación 1 a muchos con Bookings
-
-  //Relación tutor-hijo
-  children           User[]    @relation("TutorChildren")        // los hijos que tiene este tutor
-  tutorId            Int?                                          
-  tutor              User?     @relation("TutorChildren", fields: [tutorId], references: [id])
-
-  //Relación con reservas de ludoteca (para hijos)
-  daycareBookings    DaycareBooking[] @relation("DaycareBookingChildren")
-
- //Relación con refreshToken 
-  refreshTokens  RefreshToken[]
-
-  // Relación con notas del admin
-  childNotesReceived ChildNote[] @relation("ChildNotes") // Notas que recibió un niño
-  adminNotesCreated  ChildNote[] @relation("AdminNotes") // Notas creadas por un admin
-
-}
-
-//Tabla de reservas de ludoteca
-model DaycareBooking {
-  id               Int      @id @default(autoincrement())
-  comments         String?
-  status           Status   @default(PENDING)
-  attendanceStatus AttendanceStatus @default(PENDING)
-
-  startTime        DateTime
-  endTime          DateTime
-
-
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  userId           Int
-  user             User     @relation(fields: [userId], references: [id])
-
-  // Relación con los slots afectados
-  slots             DaycareSlot[] @relation("DaycareSlotBookings")
-
-  // Relación con los hijos de la reserva
-  children         User[]    @relation("DaycareBookingChildren")
-
-  // Índices para mejorar rendimiento de búsquedas
-  @@index([userId, status])       // Para listar reservas de un usuario
-  @@index([startTime, endTime])   // Para búsquedas por rango de fechas
-  @@index([status])               // Para filtrar por estado
-  @@index([createdAt])            // Para ordenar por fecha de creación
-
-}
-
-//Tabla de plazas para reservas de ludoteca diaria
-
-model DaycareSlot {
-  id              Int       @id @default(autoincrement())
-  date            DateTime   // Día del slot
-  hour            Int        // Hora de inicio del slot ej. 17
-  openHour        DateTime   // hora de inicio
-  closeHour       DateTime   // hora de fin
-  capacity        Int        // Número total de plazas (por ejemplo 20)
-  availableSpots  Int        // Plazas restantes
-  status          Status     @default(OPEN)
-
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
-
-  // Relación con reservas de ludoteca
-  bookings        DaycareBooking[] @relation("DaycareSlotBookings")
-
-  // Índices para mejorar rendimiento de búsquedas
-  @@index([date, hour])           // Para búsquedas por fecha y hora
-  @@index([date, status])         // Para filtrar slots disponibles por fecha
-  @@index([openHour, closeHour])  // Para búsquedas por rango horario
-  @@index([status])               // Para filtrar por estado
-
-}
-
-  
-
-// Tabla de reservas de cumpleaños
-model BirthdayBooking {
-  id               Int      @id @default(autoincrement())
-  guestEmail       String
-  guest            String   
-  number_of_kids   Int
-  contact_number   String
-  comments         String?
-  packageType      Package?
-  status           Status   @default(PENDING)
-
-  slotId           Int?     @unique
-  slot             BirthdaySlot? @relation(fields: [slotId], references: [id], onDelete: Cascade)
-
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  // Índices para mejorar rendimiento de búsquedas
-  @@index([status])               // Para filtrar por estado
-  @@index([guestEmail])           // Para búsquedas por email
-  @@index([createdAt])           // Para ordenar por fecha
-
-}
-
-// Plazas para reservas de cumpleaños
-model BirthdaySlot {
-
-  id          Int       @id @default(autoincrement())
-  date        DateTime  // día del cumpleaños
-  startTime   DateTime  // hora de inicio
-  endTime     DateTime  // hora de fin
-
-
-  status      Status    @default(CLOSED)
-
-  booking     BirthdayBooking? // reserva que ocupa este slot
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Índices para mejorar rendimiento de búsquedas
-  @@index([date])                 // Para búsquedas por fecha
-  @@index([startTime, endTime])   // Para búsquedas por rango horario
-  @@index([status])               // Para filtrar por estado
-
-}
-
-// Configuración de packs de cumpleaños (editables por admin)
-model BirthdayPackage {
-  id            Int      @id @default(autoincrement())
-  name          String   // "Pack Alegría", "Pack Fiesta", etc.
-  type          Package  @unique // ALEGRIA, FIESTA, ESPECIAL
-  duration      String   // "3 horas"
-  price         String   // "15€"
-  priceValue    Int      // 15 (para ordenar)
-  featuresEs    String[] // Array de características en español
-  featuresVa    String[] // Array de características en valenciano
-  perChildTextEs String? // Texto "por celebración" en español
-  perChildTextVa String? // Texto "por celebración" en valenciano
-  isPopular     Boolean  @default(false)
-  isActive      Boolean  @default(true)
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-}
-
-// Notas del admin para padres sobre sus hijos
-model ChildNote {
-  id            Int      @id @default(autoincrement())
-  childId       Int
-  child         User     @relation("ChildNotes", fields: [childId], references: [id], onDelete: Cascade)
-  
-  adminId       Int      // ID del admin que creó la nota
-  admin         User     @relation("AdminNotes", fields: [adminId], references: [id])
-  
-  content       String   // Contenido de la nota
-  images        String[] // Array de URLs de imágenes
-  noteDate      DateTime @default(now()) // Fecha de la nota
-  isRead        Boolean  @default(false) // Si el padre ha leído la nota
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-}
-
-
