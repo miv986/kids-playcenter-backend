@@ -724,20 +724,20 @@ router.delete("/deleteBirthdayBooking/:id", authenticateUser, async (req: any, r
     }
 
     try {
-        // ✅ Verificar que la reserva existe antes de eliminar
-        const existingBooking = await prisma.birthdayBooking.findUnique({
-            where: { id: bookingId },
-            include: { slot: true }
-        });
-
-        if (!existingBooking) {
-            return res.status(404).json({ error: "Reserva no encontrada." });
-        }
-
-        // ✅ Usar transacción para liberar el slot antes de eliminar
+        // ✅ Usar transacción para buscar, liberar el slot y eliminar
         await executeWithRetry(() => prisma.$transaction(async (tx) => {
-            // Primero liberar y desconectar el slot si existe
-            if (existingBooking.slotId && existingBooking.slot) {
+            // Buscar la reserva dentro de la transacción para asegurar que existe
+            const existingBooking = await tx.birthdayBooking.findUnique({
+                where: { id: bookingId },
+                include: { slot: true }
+            });
+
+            if (!existingBooking) {
+                throw new Error("Reserva no encontrada");
+            }
+
+            // Liberar el slot si existe (verificar solo por slotId, no por slot)
+            if (existingBooking.slotId) {
                 // Liberar el slot (volver a OPEN)
                 await tx.birthdaySlot.update({
                     where: { id: existingBooking.slotId },
@@ -745,10 +745,10 @@ router.delete("/deleteBirthdayBooking/:id", authenticateUser, async (req: any, r
                 });
             }
 
-            // Luego eliminar la reserva (esto desconectará automáticamente el slot por la relación)
-                await tx.birthdayBooking.delete({
-                    where: { id: bookingId }
-                });
+            // Eliminar la reserva
+            await tx.birthdayBooking.delete({
+                where: { id: bookingId }
+            });
         }, {
             isolationLevel: 'Serializable', // Máxima protección contra race conditions
             timeout: 10000 // 10 segundos timeout
@@ -757,7 +757,7 @@ router.delete("/deleteBirthdayBooking/:id", authenticateUser, async (req: any, r
         res.json({ message: "Reserva eliminada correctamente" });
     } catch (err: any) {
         console.error("Error eliminando reserva de cumpleaños:", err);
-        if (err.code === 'P2025') {
+        if (err.message === "Reserva no encontrada" || err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
         if (err.code === 'P2034') {
