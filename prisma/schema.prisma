@@ -124,6 +124,42 @@ model BirthdaySlot {
   @@index([status])
 }
 
+model MeetingSlot {
+  id             Int              @id @default(autoincrement())
+  date           DateTime
+  startTime      DateTime
+  endTime        DateTime
+  capacity       Int
+  availableSpots Int
+  status         Status           @default(OPEN)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  bookings       MeetingBooking[]
+
+  @@index([date])
+  @@index([startTime, endTime])
+  @@index([status])
+}
+
+model MeetingBooking {
+  id        Int          @id @default(autoincrement())
+  email     String
+  name      String
+  phone     String?
+  comments  String?
+  status    Status       @default(PENDING)
+  slotId    Int
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  slot      MeetingSlot  @relation(fields: [slotId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([name])
+  @@index([email])
+  @@index([createdAt])
+  @@index([slotId])
+}
+
 model BirthdayPackage {
   id             Int      @id @default(autoincrement())
   name           String
