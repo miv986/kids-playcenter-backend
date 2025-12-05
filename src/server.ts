@@ -16,6 +16,8 @@ import apiBookings from './routes/bookings';
 import apiBirthdaySlots from './routes/birthdaySlots';
 import apiDaycareSlots from './routes/daycareSlots';
 import apiDaycareBookings from './routes/daycareBookings';
+import apiMeetingSlots from './routes/meetingSlots';
+import apiMeetingBookings from './routes/meetingBookings';
 import apiPackages from './routes/packages';
 
 const app = express();
@@ -37,6 +39,8 @@ app.use('/api/bookings', apiBookings)
 app.use('/api/birthdaySlots', apiBirthdaySlots)
 app.use('/api/daycareSlots', apiDaycareSlots)
 app.use('/api/daycareBookings', apiDaycareBookings)
+app.use('/api/meetingSlots', apiMeetingSlots)
+app.use('/api/meetingBookings', apiMeetingBookings)
 app.use('/api/packages', apiPackages)
 
 // Ruta raíz
@@ -51,6 +55,8 @@ app.get('/', (req, res) => {
       apiBirthdaySlots: '/api/birthdaySlots',
       apiDaycareSlots: '/api/daycareSlots',
       apiDaycareBookings: '/api/daycareBookings',
+      apiMeetingSlots: '/api/meetingSlots',
+      apiMeetingBookings: '/api/meetingBookings',
       apiPackages: '/api/packages',
 
     },

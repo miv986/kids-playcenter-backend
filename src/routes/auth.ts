@@ -89,16 +89,50 @@ router.post("/login", async (req, res) => {
 router.get("/verify-email", async (req: any, res: any) => {
   const { token, email } = req.query;
 
-  if (!token || !email) return res.status(400).send("Token o email faltante");
+  // Obtener la URL del frontend
+  const frontendUrl = process.env.NODE_ENV === 'development' 
+    ? "http://localhost:3000"
+    : process.env.FRONTEND_URL || process.env.WEBSITE_URL || "https://somriuresicolors.es";
+  const cleanFrontendUrl = frontendUrl.replace(/\/$/, '');
+
+  // Detectar si es una petición de API (fetch con Accept: application/json)
+  const acceptHeader = req.headers['accept'] || '';
+  const isApiRequest = acceptHeader.includes('application/json') && 
+                       !acceptHeader.includes('text/html') && 
+                       !acceptHeader.includes('*/*');
+
+  if (!token || !email) {
+    if (isApiRequest) {
+      return res.status(400).json({ error: "Token o email faltante" });
+    }
+    return res.redirect(`${cleanFrontendUrl}/verify-email?error=${encodeURIComponent("Token o email faltante")}`);
+  }
 
   try {
     const user = await prisma.user.findUnique({
       where: { email: String(email) },
     });
 
-    if (!user) return res.status(404).send("Usuario no encontrado");
-    if (user.isEmailVerified) return res.status(400).send("Email ya verificado");
-    if (user.emailVerifyToken !== token) return res.status(400).send("Token inválido");
+    if (!user) {
+      if (isApiRequest) {
+        return res.status(404).json({ error: "Usuario no encontrado" });
+      }
+      return res.redirect(`${cleanFrontendUrl}/verify-email?error=${encodeURIComponent("Usuario no encontrado")}`);
+    }
+    
+    if (user.isEmailVerified) {
+      if (isApiRequest) {
+        return res.status(400).json({ error: "Email ya verificado" });
+      }
+      return res.redirect(`${cleanFrontendUrl}/verify-email?error=${encodeURIComponent("Email ya verificado")}`);
+    }
+    
+    if (user.emailVerifyToken !== token) {
+      if (isApiRequest) {
+        return res.status(400).json({ error: "Token inválido" });
+      }
+      return res.redirect(`${cleanFrontendUrl}/verify-email?error=${encodeURIComponent("Token inválido")}`);
+    }
 
     // Actualizar usuario como verificado y borrar token
     await prisma.user.update({
@@ -109,9 +143,16 @@ router.get("/verify-email", async (req: any, res: any) => {
       },
     });
 
-    res.status(200).send("Email verificado correctamente");
+    if (isApiRequest) {
+      return res.status(200).json({ success: true, message: "Email verificado correctamente" });
+    }
+    
+    return res.redirect(302, `${cleanFrontendUrl}/verify-email?success=true`);
   } catch (err: any) {
-    res.status(500).send(err.message);
+    if (isApiRequest) {
+      return res.status(500).json({ error: err.message || "Error al verificar el email" });
+    }
+    return res.redirect(`${cleanFrontendUrl}/verify-email?error=${encodeURIComponent(err.message || "Error al verificar el email")}`);
   }
 });
 
@@ -141,31 +182,17 @@ router.post("/register", validateDTO(RegisterDTO), async (req, res) => {
       },
     });
 
-    // Construir el enlace de verificación - debe apuntar al BACKEND, no al frontend
-    // En desarrollo, usar localhost automáticamente
-    let backendUrl: string;
+    // Construir el enlace de verificación
+    const backendUrl = process.env.NODE_ENV === 'development'
+      ? "http://localhost:4000"
+      : process.env.BACKEND_URL 
+          || process.env.API_URL 
+          || (process.env.HOST && process.env.HOST.includes('/api') ? process.env.HOST.replace('/api', '') : null)
+          || process.env.HOST
+          || "http://localhost:4000";
     
-    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production') {
-        // En desarrollo, usar localhost por defecto (a menos que se especifique BACKEND_URL)
-        backendUrl = process.env.BACKEND_URL || "http://localhost:4000";
-    } else {
-        // En producción, usar BACKEND_URL o API_URL
-        backendUrl = process.env.BACKEND_URL 
-            || process.env.API_URL 
-            || (process.env.HOST && process.env.HOST.includes('/api') ? process.env.HOST.replace('/api', '') : null)
-            || process.env.HOST
-            || "http://localhost:4000";
-    }
-    
-    if (!process.env.BACKEND_URL && process.env.NODE_ENV === 'production') {
-        console.warn("⚠️ BACKEND_URL no está configurado en producción. Usando valor por defecto.");
-    }
-
-    // Asegurar que el backend URL no termine con / y construir el enlace completo
     const cleanBackendUrl = backendUrl.replace(/\/$/, '');
     const verifyLink = `${cleanBackendUrl}/api/auth/verify-email?token=${emailVerifyToken}&email=${encodeURIComponent(email)}`;
-    
-    console.log(`🔗 Enlace de verificación generado: ${verifyLink} (entorno: ${process.env.NODE_ENV || 'development'})`);
 
     // Enviar email de verificación usando plantilla
     try {

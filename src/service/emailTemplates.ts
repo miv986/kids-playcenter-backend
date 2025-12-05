@@ -17,13 +17,13 @@ export interface EmailTemplateData {
  * Esta es la práctica estándar usada por servicios como restaurantes, eventos, etc.
  */
 function formatTime(date: Date): string {
-    const time = date.toLocaleTimeString('es-ES', { 
-        hour: '2-digit', 
-        minute: '2-digit', 
+    const time = date.toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
         timeZone: 'Europe/Madrid',
-        hour12: false 
+        hour12: false
     });
-    
+
     // Obtener la zona horaria (CET en invierno, CEST en verano)
     const formatter = new Intl.DateTimeFormat('es-ES', {
         timeZone: 'Europe/Madrid',
@@ -31,7 +31,7 @@ function formatTime(date: Date): string {
     });
     const parts = formatter.formatToParts(date);
     const timeZoneName = parts.find(part => part.type === 'timeZoneName')?.value || 'CET';
-    
+
     return `${time} (${timeZoneName})`;
 }
 
@@ -39,12 +39,12 @@ function formatTime(date: Date): string {
  * Formatea una fecha a formato de fecha local sin mostrar zona horaria
  */
 function formatDate(date: Date): string {
-    return date.toLocaleDateString('es-ES', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric', 
-        timeZone: 'Europe/Madrid' 
+    return date.toLocaleDateString('es-ES', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'Europe/Madrid'
     });
 }
 
@@ -441,7 +441,7 @@ export function getDaycareBookingStatusChangedEmail(
             { label: "Niños", value: childrenNames },
             { label: "Estado", value: booking.status }
         ],
-        footerMessage: booking.status === 'CANCELLED' 
+        footerMessage: booking.status === 'CANCELLED'
             ? "Si cancelaste esta reserva por error, puedes crear una nueva desde tu panel de usuario."
             : "Si tienes alguna pregunta, no dudes en contactarnos."
     };
@@ -532,6 +532,132 @@ export function getBirthdayBookingCancelledEmailMinimal(
             { label: "ID de reserva", value: `#${bookingId}` },
             { label: "Estado", value: "Cancelada" }
         ],
+        footerMessage: "Si necesitas hacer una nueva reserva, puedes hacerlo desde nuestro sitio web. Deberás completar todo el proceso de reserva nuevamente."
+    };
+}
+
+/**
+ * Email de confirmación de reserva de visita/tutoría creada
+ */
+export function getMeetingBookingCreatedEmail(
+    guestEmail: string,
+    guestName: string,
+    booking: {
+        id: number;
+        date: Date;
+        startTime: Date;
+        endTime: Date;
+        phone?: string | null;
+        comments?: string | null;
+    }
+): EmailTemplateData {
+    const details = [
+        { label: "Fecha", value: formatDate(booking.date) },
+        { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
+        { label: "Estado", value: "Reserva confirmada" },
+        { label: "Correo electrónico", value: guestEmail }
+    ];
+
+    if (booking.phone) {
+        details.push({ label: "Teléfono de contacto", value: booking.phone });
+    }
+
+    if (booking.comments) {
+        details.push({ label: "Comentarios", value: booking.comments });
+    }
+
+    return {
+        title: "Reserva de visita/tutoría recibida",
+        greeting: `Hola ${guestName}`,
+        content: `
+            <p>¡Gracias por tu reserva!</p>
+            <p>Tu reserva ha sido <strong>confirmada</strong>.</p>
+        `,
+        details,
+        footerMessage: "¡Esperamos verte pronto! Si necesitas modificar o cancelar tu reserva, ponte en contacto con nosotros."
+    };
+}
+
+/**
+ * Email de notificación de modificación de reserva de visita/tutoría
+ */
+export function getMeetingBookingModifiedEmail(
+    guestEmail: string,
+    guestName: string,
+    booking: {
+        id: number;
+        date: Date;
+        startTime: Date;
+        endTime: Date;
+        phone?: string | null;
+        comments?: string | null;
+        status?: string;
+    }
+): EmailTemplateData {
+    const details = [
+        { label: "Fecha", value: formatDate(booking.date) },
+        { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
+        { label: "Correo electrónico", value: guestEmail }
+    ];
+
+    if (booking.phone) {
+        details.push({ label: "Teléfono de contacto", value: booking.phone });
+    }
+
+    if (booking.comments) {
+        details.push({ label: "Comentarios", value: booking.comments });
+    }
+
+    if (booking.status) {
+        details.push({ label: "Estado", value: booking.status });
+    }
+
+    return {
+        title: "Reserva de visita/tutoría modificada",
+        greeting: `Hola ${guestName}`,
+        content: `
+            <p>Te informamos que tu reserva de visita/tutoría ha sido <strong>modificada</strong>.</p>
+            <p>A continuación encontrarás los <strong>nuevos detalles actualizados</strong> de tu reserva:</p>
+        `,
+        details,
+        footerMessage: "Si tienes alguna pregunta sobre los cambios realizados o necesitas hacer alguna modificación adicional, no dudes en contactarnos."
+    };
+}
+
+/**
+ * Email de reserva de visita/tutoría cancelada
+ */
+export function getMeetingBookingCancelledEmail(
+    guestEmail: string,
+    guestName: string,
+    booking: {
+        id: number;
+        date: Date;
+        startTime: Date;
+        endTime: Date;
+        phone?: string | null;
+        comments?: string | null;
+    }
+): EmailTemplateData {
+    const details = [
+        { label: "Fecha", value: formatDate(booking.date) },
+        { label: "Horario", value: `${formatTime(booking.startTime)} - ${formatTime(booking.endTime)}` },
+        { label: "Estado", value: "Cancelada" },
+        { label: "Correo electrónico", value: guestEmail }
+    ];
+
+    if (booking.phone) {
+        details.push({ label: "Teléfono de contacto", value: booking.phone });
+    }
+
+    return {
+        title: "Reserva de visita/tutoría cancelada",
+        greeting: `Hola ${guestName}`,
+        content: `
+            <p>Te informamos que tu reserva de visita/tutoría ha sido <strong>cancelada</strong>.</p>
+            <p>Detalles de la reserva cancelada:</p>
+        `,
+        details,
         footerMessage: "Si necesitas hacer una nueva reserva, puedes hacerlo desde nuestro sitio web. Deberás completar todo el proceso de reserva nuevamente."
     };
 }
