@@ -47,7 +47,7 @@ router.put("/:type", authenticateUser, validateDTO(UpdatePackageDTO), async (req
 
   try {
     // Filtrar solo los campos permitidos para actualizar
-    const allowedFields = ['name', 'duration', 'price', 'priceValue', 'featuresEs', 'featuresVa', 'perChildTextEs', 'perChildTextVa', 'isPopular', 'isActive'];
+    const allowedFields = ['nameEs', 'nameCa', 'durationEs', 'durationCa', 'price', 'priceValue', 'featuresEs', 'featuresVa', 'perChildTextEs', 'perChildTextVa', 'isPopular', 'isActive', 'showBookButton'];
     const updateData: any = {};
     
     for (const field of allowedFields) {
