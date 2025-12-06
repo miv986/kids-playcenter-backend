@@ -13,7 +13,7 @@ import { authenticateUser } from "../middleware/auth";
 
 // Función para generar JWT
 const generateToken = (userId: number, role: string) => {
-  const accessToken = jwt.sign({ userId, role }, process.env.JWT_SECRET!, { expiresIn: "15minutes" });
+  const accessToken = jwt.sign({ userId, role }, process.env.JWT_SECRET!, { expiresIn: "2h" });
   const refreshToken = jwt.sign({ userId, role }, process.env.JWT_REFRESH_SECRET!, { expiresIn: "7days" });
   return { accessToken, refreshToken };
 };
@@ -66,7 +66,7 @@ router.post("/login", async (req, res) => {
       data: {
         token: refreshToken,
         userId: user.id,
-        expiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 días
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 días
       },
     });
 
@@ -215,7 +215,7 @@ router.post("/register", validateDTO(RegisterDTO), async (req, res) => {
       data: {
         token: refreshToken,
         userId: user.id,
-        expiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 días
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 días
       },
     });
 
@@ -262,7 +262,7 @@ router.post("/refresh", async (req, res) => {
     const accessToken = jwt.sign(
       { userId: user.id, role: user.role },
       process.env.JWT_SECRET!,
-      { expiresIn: "15minutes" }
+      { expiresIn: "2h" }
     );
 
     res.json({ accessToken });
