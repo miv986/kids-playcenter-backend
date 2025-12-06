@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "BirthdayPackage" ALTER COLUMN "nameCa" DROP NOT NULL,
+ALTER COLUMN "nameEs" DROP NOT NULL;

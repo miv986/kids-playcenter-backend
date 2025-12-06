@@ -3,11 +3,19 @@ import { IsString, IsBoolean, IsArray, IsInt, IsOptional, Min } from "class-vali
 export class UpdatePackageDTO {
   @IsOptional()
   @IsString()
-  name?: string;
+  nameEs?: string;
 
   @IsOptional()
   @IsString()
-  duration?: string;
+  nameCa?: string;
+
+  @IsOptional()
+  @IsString()
+  durationEs?: string;
+
+  @IsOptional()
+  @IsString()
+  durationCa?: string;
 
   @IsOptional()
   @IsString()
@@ -43,5 +51,9 @@ export class UpdatePackageDTO {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  showBookButton?: boolean;
 }
 
