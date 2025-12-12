@@ -79,15 +79,23 @@ app.use((req, res) => {
   });
 });
 
-// Iniciar servidor
-app.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  
-  // Inicializar trabajos programados (cron jobs)
-  try {
-    const { initializeScheduledJobs } = await import("./jobs/bookingScheduler");
-    initializeScheduledJobs();
-  } catch (error) {
-    console.error("Error inicializando trabajos programados", error);
-  }
-});
+/**
+ * Función para arrancar el servidor
+ */
+export async function startServer() {
+  const PORT = process.env.PORT || 4000;
+
+  app.listen(PORT, async () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+
+    // Inicializar trabajos programados (cron jobs)
+    try {
+      const { initializeScheduledJobs } = await import('./jobs/bookingScheduler');
+      initializeScheduledJobs();
+    } catch (error) {
+      console.error('Error inicializando trabajos programados', error);
+    }
+  });
+}
+
+export default app;
