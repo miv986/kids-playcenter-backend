@@ -11,7 +11,7 @@ export const securityHeaders = helmet({
             styleSrc: ["'self'", "'unsafe-inline'"],
             scriptSrc: ["'self'"],
             imgSrc: ["'self'", "data:", "https:"],
-            connectSrc: ["'self'"],
+            connectSrc: ["'self'", "https://kids-playcenter-web-project-72o0m43vp.vercel.app", "https://somriuresicolors.es"],
             fontSrc: ["'self'"],
             objectSrc: ["'none'"],
             mediaSrc: ["'self'"],
@@ -49,7 +49,7 @@ export const authRateLimiter = rateLimit({
  */
 export const generalRateLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 300, // Máximo 300 requests por IP
+    max: 1000, // Máximo 300 requests por IP
     message: {
         error: 'Demasiadas peticiones. Por favor, intenta de nuevo más tarde.'
     },
