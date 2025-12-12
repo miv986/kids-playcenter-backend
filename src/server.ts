@@ -98,4 +98,12 @@ export async function startServer() {
   });
 }
 
+// Ejecutar servidor si este archivo es el entry point
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error('❌ Error fatal al iniciar servidor:', error);
+    process.exit(1);
+  });
+}
+
 export default app;
