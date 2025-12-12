@@ -26,7 +26,7 @@ const PORT = process.env.PORT || 4000;
 
 // CORS
 app.use(corsMiddleware);
-
+app.options('*', corsMiddleware); // habilitar preflight requests para todas las rutas
 // Body parser
 app.use(cookieParser());
 app.use(bodyParser.json({ limit: '50mb' }));
