@@ -780,47 +780,71 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
         // 🧩 Ejecutar todo en una transacción
         // Usar retry logic para manejar conflictos de serialización automáticamente
         await executeWithRetry(() => prisma.$transaction(async (tx) => {
-            // 1️⃣ Liberar plazas de todos los slots asociados
-            // ✅ Validar que no exceda capacidad después de incrementar
-            const childrenCount = booking.children.length;
-            for (const slot of booking.slots) {
-                const updatedSlot = await tx.daycareSlot.update({
-                    where: { id: slot.id },
-                    data: { availableSpots: { increment: childrenCount } },
-                });
-                
-                // Validar que no exceda capacidad
-                if (updatedSlot.availableSpots > updatedSlot.capacity) {
-                    // Ajustar a capacidad máxima
-                    await tx.daycareSlot.update({
+            // 1️⃣ Liberar plazas de todos los slots asociados SOLO si la reserva NO está cancelada
+            // (Si está cancelada, las plazas ya fueron liberadas al cancelar)
+            if (booking.status !== 'CANCELLED') {
+                const childrenCount = booking.children.length;
+                for (const slot of booking.slots) {
+                    const updatedSlot = await tx.daycareSlot.update({
                         where: { id: slot.id },
-                        data: { availableSpots: updatedSlot.capacity }
+                        data: { availableSpots: { increment: childrenCount } },
                     });
-                    if (process.env.NODE_ENV === 'development') {
-                        console.warn(`Slot ${slot.id}: availableSpots ajustado a capacity (${updatedSlot.capacity})`);
+                    
+                    // Validar que no exceda capacidad
+                    if (updatedSlot.availableSpots > updatedSlot.capacity) {
+                        // Ajustar a capacidad máxima
+                        await tx.daycareSlot.update({
+                            where: { id: slot.id },
+                            data: { availableSpots: updatedSlot.capacity }
+                        });
+                        if (process.env.NODE_ENV === 'development') {
+                            console.warn(`Slot ${slot.id}: availableSpots ajustado a capacity (${updatedSlot.capacity})`);
+                        }
                     }
                 }
             }
 
-            // 2️⃣ Eliminar la reserva
+            // 2️⃣ Desconectar relaciones many-to-many antes de eliminar
+            // Prisma debería manejarlo automáticamente, pero en producción con constraints estrictos
+            // puede fallar si hay referencias activas. Desconectar explícitamente es más seguro.
+            await tx.daycareBooking.update({
+                where: { id: bookingId },
+                data: {
+                    slots: {
+                        set: []
+                    },
+                    children: {
+                        set: []
+                    }
+                }
+            });
+
+            // 3️⃣ Eliminar la reserva
             await tx.daycareBooking.delete({
                 where: { id: bookingId },
             });
         }, {
-            isolationLevel: 'Serializable', // Máxima protección contra race conditions
+            isolationLevel: 'ReadCommitted', // Menos estricto que Serializable, evita deadlocks
             timeout: 10000 // 10 segundos timeout
         }));
 
         res.json({ message: "✅ Reserva eliminada correctamente y plazas liberadas." });
     } catch (err: any) {
         console.error("Error al eliminar reserva:", err);
+        console.error("Error completo:", JSON.stringify(err, null, 2));
+        console.error("Error code:", err.code);
+        console.error("Error message:", err.message);
+        console.error("Error meta:", err.meta);
         
         // Manejar errores específicos de Prisma
         if (err.code === 'P2025') {
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
         if (err.code === 'P2003') {
-            return res.status(400).json({ error: "No se puede eliminar la reserva debido a referencias existentes." });
+            return res.status(400).json({ 
+                error: "No se puede eliminar la reserva debido a referencias existentes.",
+                details: err.meta?.field_name ? `Campo: ${err.meta.field_name}` : undefined
+            });
         }
         if (err.code === 'P2034') {
             // Transacción falló por conflicto de serialización
@@ -828,8 +852,17 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
                 error: "La eliminación no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
             });
         }
+        if (err.code === 'P1008') {
+            // Timeout de transacción
+            return res.status(408).json({ 
+                error: "La operación tardó demasiado. Por favor, intenta de nuevo." 
+            });
+        }
         
-        res.status(500).json({ error: "Error interno del servidor." });
+        res.status(500).json({ 
+            error: "Error interno del servidor.",
+            details: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
     } 
 });
 
