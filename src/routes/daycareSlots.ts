@@ -15,7 +15,7 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
   }
 
   try {
-    const { startDate, openHour, closeHour, capacity } = req.body;
+    const { startDate, openHour, closeHour, capacity, customDates } = req.body;
 
     if (!startDate || !openHour || !closeHour) {
       return res.status(400).json({ error: "Faltan los campos startDate, openHour o closeHour." });
@@ -55,20 +55,10 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
     const errors = [];
     let lastProcessedDate: Date | null = null;
     
-    // Obtener el día de la semana de la fecha de inicio (0 = domingo, 1 = lunes, ..., 6 = sábado)
-    const startWeekday = baseDate.getDay();
-    
-    // Calcular el lunes de la semana de inicio
-    // Si es domingo (0), retroceder 6 días; si es lunes (1), retroceder 0 días, etc.
-    const daysToMonday = startWeekday === 0 ? -6 : 1 - startWeekday;
-    const mondayOfFirstWeek = new Date(baseDate);
-    mondayOfFirstWeek.setDate(baseDate.getDate() + daysToMonday);
-    mondayOfFirstWeek.setHours(0, 0, 0, 0);
-    
-    // Fase 1: Generar lunes a jueves de la semana de inicio
-    let currentDate = new Date(mondayOfFirstWeek);
-    for (let day = 1; day <= 4; day++) {
-      const date = new Date(currentDate);
+    // Función auxiliar para crear slots para una fecha específica
+    const createSlotsForDate = async (targetDate: Date) => {
+      const date = new Date(targetDate);
+      date.setHours(0, 0, 0, 0);
       lastProcessedDate = new Date(date);
       
       for (let hour = openH; hour < closeH; hour++) {
@@ -113,64 +103,48 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
           errors.push(`Error creando slot para ${date.toDateString()} ${hour}:00`);
         }
       }
-      
-      // Avanzar al siguiente día
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
+    };
     
-    // Fase 2: Generar lunes a jueves de la semana siguiente
-    // Avanzar al lunes de la siguiente semana (sumar 7 días desde el lunes actual)
-    currentDate.setDate(mondayOfFirstWeek.getDate() + 7);
-    
-    for (let day = 1; day <= 4; day++) {
-      const date = new Date(currentDate);
-      lastProcessedDate = new Date(date);
-      
-      for (let hour = openH; hour < closeH; hour++) {
-        try {
-          // Verificar si ya existe un slot para esta fecha y hora
-          const existingSlot = await prisma.daycareSlot.findFirst({
-            where: {
-              date: {
-                gte: new Date(date.toDateString()),
-                lt: new Date(new Date(date).setDate(date.getDate() + 1))
-              },
-              hour: hour,
-            },
-          });
-
-          if (existingSlot) {
-            errors.push(`Slot ya existe para ${date.toDateString()} a las ${hour}:00`);
-            continue;
-          }
-
-          const openDate = new Date(date);
-          openDate.setHours(hour, 0, 0, 0);
-
-          const closeDate = new Date(date);
-          closeDate.setHours(hour + 1, 0, 0, 0);
-
-          const newSlot = await prisma.daycareSlot.create({
-            data: {
-              date: new Date(date.toDateString()),
-              hour,
-              openHour: openDate,
-              closeHour: closeDate,
-              capacity,
-              availableSpots: capacity,
-              status: "OPEN",
-            },
-          });
-
-          createdSlots.push(newSlot);
-        } catch (error) {
-          console.error(`Error creando slot para ${date.toDateString()} ${hour}:00:`, error);
-          errors.push(`Error creando slot para ${date.toDateString()} ${hour}:00`);
+    // Si se proporcionan fechas personalizadas, usarlas
+    if (customDates && Array.isArray(customDates) && customDates.length > 0) {
+      // Validar y procesar fechas personalizadas
+      for (const dateStr of customDates) {
+        const customDate = new Date(dateStr);
+        if (isNaN(customDate.getTime())) {
+          errors.push(`Fecha inválida: ${dateStr}`);
+          continue;
         }
+        await createSlotsForDate(customDate);
+      }
+    } else {
+      // Lógica predeterminada: 2 semanas, lunes a jueves
+      // Obtener el día de la semana de la fecha de inicio (0 = domingo, 1 = lunes, ..., 6 = sábado)
+      const startWeekday = baseDate.getDay();
+      
+      // Calcular el lunes de la semana de inicio
+      // Si es domingo (0), retroceder 6 días; si es lunes (1), retroceder 0 días, etc.
+      const daysToMonday = startWeekday === 0 ? -6 : 1 - startWeekday;
+      const mondayOfFirstWeek = new Date(baseDate);
+      mondayOfFirstWeek.setDate(baseDate.getDate() + daysToMonday);
+      mondayOfFirstWeek.setHours(0, 0, 0, 0);
+      
+      // Fase 1: Generar lunes a jueves de la semana de inicio
+      let currentDate = new Date(mondayOfFirstWeek);
+      for (let day = 1; day <= 4; day++) {
+        await createSlotsForDate(currentDate);
+        // Avanzar al siguiente día
+        currentDate.setDate(currentDate.getDate() + 1);
       }
       
-      // Avanzar al siguiente día
-      currentDate.setDate(currentDate.getDate() + 1);
+      // Fase 2: Generar lunes a jueves de la semana siguiente
+      // Avanzar al lunes de la siguiente semana (sumar 7 días desde el lunes actual)
+      currentDate.setDate(mondayOfFirstWeek.getDate() + 7);
+      
+      for (let day = 1; day <= 4; day++) {
+        await createSlotsForDate(currentDate);
+        // Avanzar al siguiente día
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
     }
 
     return res.status(201).json({
