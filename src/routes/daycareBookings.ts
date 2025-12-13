@@ -47,19 +47,15 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         }
 
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede reservar fechas pasadas)
-        const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+        const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour } = await import("../utils/dateHelpers");
         
-        // Extraer la fecha local correctamente (usar métodos locales, no UTC)
-        // Esto asegura que si startTime viene en UTC, se convierta correctamente a la zona horaria local
-        const localYear = start.getFullYear();
-        const localMonth = start.getMonth() + 1;
-        const localDay = start.getDate();
-        const dateString = `${localYear}-${String(localMonth).padStart(2, '0')}-${String(localDay).padStart(2, '0')}`;
+        // Extraer la fecha local correctamente usando utilidades
+        const dateString = getLocalDateString(start);
         
         if (process.env.NODE_ENV === 'development') {
             console.log(`[DEBUG] startTime recibido: ${startTime}`);
             console.log(`[DEBUG] start parseado: ${start.toISOString()}`);
-            console.log(`[DEBUG] Fecha local extraída: ${dateString} (año: ${localYear}, mes: ${localMonth}, día: ${localDay})`);
+            console.log(`[DEBUG] Fecha local extraída: ${dateString}`);
         }
         
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
@@ -92,10 +88,40 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
 
         const spotsToDiscount = childrenIds.length;
 
-        // Calcular cuántos slots se esperan (basado en la diferencia de horas)
-        const startHour = start.getHours();
-        const endHour = end.getHours();
-        const expectedSlotsCount = endHour - startHour;
+        // ✅ Calcular horas usando utilidades para consistencia
+        // Si viene slotId, usarlo como referencia para evitar problemas de zona horaria
+        let startHour: number;
+        let endHour: number;
+        let expectedSlotsCount: number;
+
+        if (slotId) {
+            // Usar el slotId para obtener el slot y calcular el rango desde la BD
+            const referenceSlot = await prisma.daycareSlot.findUnique({
+                where: { id: slotId }
+            });
+
+            if (!referenceSlot) {
+                return res.status(404).json({ error: "Slot no encontrado." });
+            }
+
+            // Calcular el rango desde el slot de referencia (usa el hour real de la BD)
+            startHour = referenceSlot.hour;
+            // Calcular endHour basado en la diferencia entre startTime y endTime
+            const timeDiffMs = end.getTime() - start.getTime();
+            const timeDiffHours = Math.floor(timeDiffMs / (1000 * 60 * 60));
+            endHour = startHour + timeDiffHours;
+            expectedSlotsCount = timeDiffHours;
+        } else {
+            // Calcular desde startTime y endTime usando utilidades para consistencia
+            startHour = getLocalHour(start);
+            endHour = getLocalHour(end);
+            expectedSlotsCount = endHour - startHour;
+        }
+        
+        if (process.env.NODE_ENV === 'development') {
+            console.log(`[DEBUG] Horas extraídas - startHour: ${startHour}, endHour: ${endHour}, expectedSlotsCount: ${expectedSlotsCount}`);
+            console.log(`[DEBUG] slotId recibido: ${slotId}`);
+        }
 
         // ✅ CRÍTICO: Mover toda la validación DENTRO de la transacción para prevenir race conditions
         // Usar isolationLevel: 'Serializable' para máxima seguridad

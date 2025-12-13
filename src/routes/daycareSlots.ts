@@ -1,6 +1,7 @@
 import express from "express";
 import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import prisma from "../utils/prisma";
+import { parseDateString, getStartOfDay, getEndOfDay } from "../utils/dateHelpers";
 
 const router = express.Router();
 
@@ -45,9 +46,11 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
       return res.status(400).json({ error: "La capacidad debe ser un número positivo." });
     }
 
-    // Convertir la fecha de inicio
-    const baseDate = new Date(startDate);
-    if (isNaN(baseDate.getTime())) {
+    // Convertir la fecha de inicio usando utilidades para consistencia
+    let baseDate: Date;
+    try {
+      baseDate = parseDateString(startDate);
+    } catch (error) {
       return res.status(400).json({ error: "Formato de fecha inválido. Use YYYY-MM-DD" });
     }
 
@@ -57,18 +60,21 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
     
     // Función auxiliar para crear slots para una fecha específica
     const createSlotsForDate = async (targetDate: Date) => {
-      const date = new Date(targetDate);
-      date.setHours(0, 0, 0, 0);
+      // Usar utilidades para normalizar la fecha de manera consistente
+      const date = getStartOfDay(targetDate);
       lastProcessedDate = new Date(date);
+      
+      // Obtener el fin del día para la búsqueda
+      const endOfDay = getEndOfDay(date);
       
       for (let hour = openH; hour < closeH; hour++) {
         try {
-          // Verificar si ya existe un slot para esta fecha y hora
+          // Verificar si ya existe un slot para esta fecha y hora usando utilidades
           const existingSlot = await prisma.daycareSlot.findFirst({
             where: {
               date: {
-                gte: new Date(date.toDateString()),
-                lt: new Date(new Date(date).setDate(date.getDate() + 1))
+                gte: date,
+                lte: endOfDay
               },
               hour: hour,
             },
@@ -87,7 +93,7 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
 
           const newSlot = await prisma.daycareSlot.create({
             data: {
-              date: new Date(date.toDateString()),
+              date: date,
               hour,
               openHour: openDate,
               closeHour: closeDate,
@@ -107,14 +113,15 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
     
     // Si se proporcionan fechas personalizadas, usarlas
     if (customDates && Array.isArray(customDates) && customDates.length > 0) {
-      // Validar y procesar fechas personalizadas
+      // Validar y procesar fechas personalizadas usando utilidades para consistencia
       for (const dateStr of customDates) {
-        const customDate = new Date(dateStr);
-        if (isNaN(customDate.getTime())) {
+        try {
+          const customDate = parseDateString(dateStr);
+          await createSlotsForDate(customDate);
+        } catch (error) {
           errors.push(`Fecha inválida: ${dateStr}`);
           continue;
         }
-        await createSlotsForDate(customDate);
       }
     } else {
       // Lógica predeterminada: 2 semanas, lunes a jueves

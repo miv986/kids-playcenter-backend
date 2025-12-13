@@ -118,3 +118,24 @@ export function validateNotPastTodayDateTime(date: Date, dateTime: Date, errorMe
   }
 }
 
+/**
+ * Extrae la hora local de una fecha de manera consistente
+ * @param date - Fecha de la cual extraer la hora
+ * @returns Hora en formato local (0-23)
+ */
+export function getLocalHour(date: Date): number {
+  return date.getHours();
+}
+
+/**
+ * Extrae la fecha local como string YYYY-MM-DD de manera consistente
+ * @param date - Fecha de la cual extraer la fecha
+ * @returns String en formato YYYY-MM-DD
+ */
+export function getLocalDateString(date: Date): string {
+  const localYear = date.getFullYear();
+  const localMonth = date.getMonth() + 1;
+  const localDay = date.getDate();
+  return `${localYear}-${String(localMonth).padStart(2, '0')}-${String(localDay).padStart(2, '0')}`;
+}
+
