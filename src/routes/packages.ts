@@ -3,6 +3,7 @@ import { authenticateUser } from "../middleware/auth";
 import { validateDTO } from "../middleware/validation";
 import { UpdatePackageDTO } from "../dtos/UpdatePackageDTO";
 import prisma from "../utils/prisma";
+import { BirthdayPackage, Package } from "@prisma/client";
 
 const router = express.Router();
 
@@ -57,7 +58,7 @@ router.put("/:type", authenticateUser, validateDTO(UpdatePackageDTO), async (req
     }
 
     const updatedPackage = await prisma.birthdayPackage.update({
-      where: { type },
+      where: { type: type as Package },
       data: updateData
     });
     res.json(updatedPackage);

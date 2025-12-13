@@ -164,18 +164,18 @@ model BirthdayPackage {
   id             Int      @id @default(autoincrement())
   nameEs         String
   nameCa         String
-  type           Package  @unique
+  type           Package  @unique  
   durationEs     String?
   durationCa     String?
-  price          String
-  priceValue     Int
+  price          String?
+  priceValue     Int?
   isPopular      Boolean  @default(false)
   isActive       Boolean  @default(true)
   showBookButton Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   featuresEs     String[]
-  featuresVa     String[]
+  featuresVa     String[] 
   perChildTextEs String?
   perChildTextVa String?
 }
@@ -218,4 +218,5 @@ enum Package {
   ALEGRIA
   FIESTA
   ESPECIAL
+  OTRO
 }
