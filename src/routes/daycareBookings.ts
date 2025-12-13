@@ -854,11 +854,6 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
                     previousStatus
                 );
                 
-                await sendTemplatedEmail(
-                    bookingInfo.user.email,
-                    "Reserva de ludoteca eliminada - Somriures & Colors",
-                    emailData
-                );
                 console.log(`✅ Email de eliminación enviado a ${bookingInfo.user.email}`);
             } catch (emailError) {
                 console.error("Error enviando email de eliminación:", emailError);
