@@ -777,6 +777,17 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
             return res.status(404).json({ error: "Reserva no encontrada." });
         }
 
+        // Guardar información de la reserva antes de eliminarla para enviar email
+        const previousStatus = booking.status;
+        const bookingInfo = {
+            id: booking.id,
+            startTime: booking.startTime,
+            endTime: booking.endTime,
+            children: booking.children,
+            status: booking.status,
+            user: booking.user
+        };
+
         // 🧩 Ejecutar todo en una transacción
         // Usar retry logic para manejar conflictos de serialización automáticamente
         await executeWithRetry(() => prisma.$transaction(async (tx) => {
@@ -827,6 +838,33 @@ router.delete("/deletedDaycareBooking/:id", authenticateUser, async (req: any, r
             isolationLevel: 'ReadCommitted', // Menos estricto que Serializable, evita deadlocks
             timeout: 10000 // 10 segundos timeout
         }));
+
+        // Enviar email de eliminación solo si la reserva NO estaba cancelada
+        if (bookingInfo.user?.email && previousStatus !== 'CANCELLED') {
+            try {
+                const emailData = getDaycareBookingStatusChangedEmail(
+                    bookingInfo.user.name,
+                    {
+                        id: bookingInfo.id,
+                        startTime: bookingInfo.startTime,
+                        endTime: bookingInfo.endTime,
+                        children: bookingInfo.children,
+                        status: 'CANCELLED' // Se marca como cancelada en el email
+                    },
+                    previousStatus
+                );
+                
+                await sendTemplatedEmail(
+                    bookingInfo.user.email,
+                    "Reserva de ludoteca eliminada - Somriures & Colors",
+                    emailData
+                );
+                console.log(`✅ Email de eliminación enviado a ${bookingInfo.user.email}`);
+            } catch (emailError) {
+                console.error("Error enviando email de eliminación:", emailError);
+                // No fallar la eliminación si falla el email
+            }
+        }
 
         res.json({ message: "✅ Reserva eliminada correctamente y plazas liberadas." });
     } catch (err: any) {
