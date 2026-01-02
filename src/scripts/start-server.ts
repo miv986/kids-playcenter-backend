@@ -1,36 +1,11 @@
 // start-server.ts
-import { execSync, spawn } from 'child_process';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
-
-/**
- * Espera a que la base de datos esté disponible
- */
-async function waitForDatabase(maxRetries = 20, delay = 3000): Promise<void> {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`🔍 Verificando base de datos (intento ${attempt}/${maxRetries})...`);
-      await prisma.$queryRaw`SELECT 1`;
-      console.log("✅ Base de datos lista");
-      return;
-    } catch (err: any) {
-      console.error(`❌ Base de datos no disponible: ${err.message}`);
-      if (attempt < maxRetries) {
-        console.log(`⏳ Reintentando en ${delay / 1000}s...`);
-        await new Promise(res => setTimeout(res, delay));
-      } else {
-        console.error("❌ La base de datos no respondió después de varios intentos");
-        return; // NO matamos el proceso directamente
-      }
-    }
-  }
-}
+import { execSync } from 'child_process';
+import { initializePrisma, disconnectPrisma } from '../utils/prisma';
 
 /**
  * Ejecuta migraciones con reintentos
  */
-async function runMigrations(maxRetries = 3, delay = 5000): Promise<boolean> {
+async function runMigrations(maxRetries = 5, delay = 5000): Promise<boolean> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`🔄 Ejecutando migraciones (intento ${attempt}/${maxRetries})...`);
@@ -56,50 +31,47 @@ async function runMigrations(maxRetries = 3, delay = 5000): Promise<boolean> {
 }
 
 /**
- * Arranca el servidor real (dist/server.js)
+ * Arranca el servidor
  */
 async function start() {
-  console.log('🚀 Iniciando servidor...');
+  console.log('🚀 Iniciando servidor Kids Playcenter...');
 
-  await waitForDatabase();
+  // 1. Conectar a la base de datos con reintentos
+  console.log('🔌 Conectando a la base de datos...');
+  try {
+    await initializePrisma(20, 3000); // 20 reintentos, 3 segundos entre cada uno
+  } catch (error: any) {
+    console.error('❌ No se pudo conectar a la base de datos:', error.message);
+    console.error('💡 Verifica que PostgreSQL esté corriendo y que DATABASE_URL sea correcta');
+    process.exit(1);
+  }
 
+  // 2. Ejecutar migraciones
   const migrationsSuccess = await runMigrations();
   if (!migrationsSuccess) {
     console.warn('⚠️ Las migraciones fallaron, pero el servidor intentará iniciar de todas formas.');
+    // En producción, podrías querer salir aquí: process.exit(1);
   }
 
-  console.log('🚀 Lanzando aplicación Node...');
+  // 3. Importar y arrancar el servidor (que ya tiene su propia lógica de startup)
+  console.log('🚀 Arrancando servidor HTTP...');
+  const { startServer } = await import('../server');
   
-  const serverProcess = spawn('node', ['dist/server.js'], {
-    stdio: 'inherit',
-    env: process.env,
-    shell: false
-  });
+  // startServer() ya maneja:
+  // - Registro de rutas
+  // - Inicio de cron jobs
+  // - Escucha en el puerto
+  await startServer();
 
-  serverProcess.on('error', (error: any) => {
-    console.error('❌ Error al iniciar el servidor:', error);
-    process.exit(1);
-  });
-
-  serverProcess.on('exit', (code) => {
-    if (code && code !== 0) {
-      console.error(`❌ El servidor terminó con código ${code}`);
-      process.exit(code);
-    }
-  });
-
-  // Shutdown controlado
+  // 4. Manejo de señales de shutdown
   const gracefulShutdown = async (signal: NodeJS.Signals) => {
-    console.log(`📴 Recibida señal ${signal}, apagando...`);
+    console.log(`📴 Recibida señal ${signal}, apagando gracefully...`);
     try {
-      await prisma.$disconnect();
-      serverProcess.kill(signal);
-      setTimeout(() => {
-        console.log('⚠️ Forzando cierre...');
-        process.exit(0);
-      }, 10000);
+      await disconnectPrisma();
+      console.log('✅ Shutdown completado');
+      process.exit(0);
     } catch (error) {
-      console.error('Error durante shutdown:', error);
+      console.error('❌ Error durante shutdown:', error);
       process.exit(1);
     }
   };

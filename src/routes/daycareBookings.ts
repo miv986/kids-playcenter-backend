@@ -51,13 +51,6 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
         
         // Extraer la fecha local correctamente usando utilidades
         const dateString = getLocalDateString(start);
-        
-        if (process.env.NODE_ENV === 'development') {
-            console.log(`[DEBUG] startTime recibido: ${startTime}`);
-            console.log(`[DEBUG] start parseado: ${start.toISOString()}`);
-            console.log(`[DEBUG] Fecha local extraída: ${dateString}`);
-        }
-        
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
         const date = getStartOfDay(start);
         
@@ -116,11 +109,6 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             startHour = getLocalHour(start);
             endHour = getLocalHour(end);
             expectedSlotsCount = endHour - startHour;
-        }
-        
-        if (process.env.NODE_ENV === 'development') {
-            console.log(`[DEBUG] Horas extraídas - startHour: ${startHour}, endHour: ${endHour}, expectedSlotsCount: ${expectedSlotsCount}`);
-            console.log(`[DEBUG] slotId recibido: ${slotId}`);
         }
 
         // ✅ CRÍTICO: Mover toda la validación DENTRO de la transacción para prevenir race conditions
@@ -374,20 +362,10 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         }
 
         // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede modificar a fechas pasadas)
-        const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime } = await import("../utils/dateHelpers");
+        const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour } = await import("../utils/dateHelpers");
         
-        // Extraer la fecha local correctamente (usar métodos locales, no UTC)
-        const localYear = start.getFullYear();
-        const localMonth = start.getMonth() + 1;
-        const localDay = start.getDate();
-        const dateString = `${localYear}-${String(localMonth).padStart(2, '0')}-${String(localDay).padStart(2, '0')}`;
-        
-        if (process.env.NODE_ENV === 'development') {
-            console.log(`[DEBUG MODIFICAR] startTime recibido: ${startTime}`);
-            console.log(`[DEBUG MODIFICAR] start parseado: ${start.toISOString()}`);
-            console.log(`[DEBUG MODIFICAR] Fecha local extraída: ${dateString} (año: ${localYear}, mes: ${localMonth}, día: ${localDay})`);
-        }
-        
+        // Extraer la fecha local correctamente usando utilidades
+        const dateString = getLocalDateString(start);
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
         const date = getStartOfDay(start);
 
@@ -420,8 +398,9 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             }
         }
 
-        const startHour = start.getHours();
-        const endHour = end.getHours();
+        // ✅ Calcular horas usando utilidades para consistencia
+        const startHour = getLocalHour(start);
+        const endHour = getLocalHour(end);
         const expectedSlotsCount = endHour - startHour;
         const spotsNeeded = childrenIds.length;
 
@@ -469,6 +448,28 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             }
 
             const newSlots = newSlotsWithSpots;
+
+            // ✅ Validar reserva existente DENTRO de la transacción (previene duplicados)
+            // Excluir la reserva actual que se está modificando
+            const newSlotIds = newSlots.map(s => s.id);
+            const existingBookingForNewSlots = await tx.daycareBooking.findFirst({
+                where: {
+                    userId: userId,
+                    id: { not: bookingId }, // Excluir la reserva actual
+                    slots: {
+                        some: {
+                            id: { in: newSlotIds }
+                        }
+                    },
+                    status: {
+                        not: 'CANCELLED'
+                    }
+                },
+            });
+
+            if (existingBookingForNewSlots) {
+                throw new Error("Ya tienes una reserva activa para ese día/horario. Por favor, modifica o cancela tu reserva existente.");
+            }
 
             // 🟢 Devolver plazas de slots antiguos
             // ✅ Validar que no exceda capacidad después de incrementar
@@ -538,9 +539,46 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             timeout: 10000 // 10 segundos timeout
         }));
 
+        // Recargar el booking con todas las relaciones para asegurar que el user esté cargado
+        const bookingWithUser = await prisma.daycareBooking.findUnique({
+            where: { id: bookingId },
+            include: { 
+                user: { include: { children: true } }, 
+                slots: true, 
+                children: true 
+            },
+        });
+        
+        if (bookingWithUser?.user?.email) {
+            try {
+                const emailData = getDaycareBookingConfirmedEmail(
+                    bookingWithUser.user.name,
+                    {
+                        id: bookingWithUser.id,
+                        startTime: bookingWithUser.startTime,
+                        endTime: bookingWithUser.endTime,
+                        children: bookingWithUser.children,
+                        status: bookingWithUser.status
+                    }
+                );
+                
+                await sendTemplatedEmail(
+                    bookingWithUser.user.email,
+                    "Reserva de ludoteca modificada - Somriures & Colors",
+                    emailData
+                );
+                console.log(`✅ Email de modificación de reserva enviado a ${bookingWithUser.user.email}`);
+            } catch (emailError) {
+                console.error("Error enviando email de modificación:", emailError);
+                // No fallar la modificación si falla el email
+            }
+        } else {
+            console.warn(`⚠️ No se puede enviar email de modificación: user o email no disponible. Booking ID: ${bookingId}`);
+        }
+
         return res.json({
             message: "✅ Reserva modificada correctamente.",
-            booking: updatedBooking,
+            booking: bookingWithUser || updatedBooking,
         });
     } catch (err: any) {
         console.error("Error al modificar reserva:", err);

@@ -1,10 +1,11 @@
-import prisma from "../utils/prisma";
+import { getPrisma } from "../utils/prisma";
 
 /**
  * Cierra reservas pasadas y envía notificaciones a los usuarios
  */
 export async function closePastBookingsAndNotify() {
     try {
+        const prisma = getPrisma();
         const now = new Date();
         
         // Buscar reservas pasadas que no estén ya CLOSED o CANCELLED
