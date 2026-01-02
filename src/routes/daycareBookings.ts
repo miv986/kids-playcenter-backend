@@ -7,6 +7,7 @@ import { sendTemplatedEmail } from "../service/mailing";
 import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
 import { executeWithRetry } from "../utils/transactionRetry";
+import { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour, parseISODateAsLocal } from "../utils/dateHelpers";
 
 const router = express.Router();
 
@@ -33,8 +34,9 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             return res.status(400).json({ error: "Debes proporcionar fecha y hora de inicio y fin." });
         }
 
-        const start = new Date(startTime);
-        const end = new Date(endTime);
+        // Parsear fechas ISO como locales para evitar problemas de timezone
+        const start = parseISODateAsLocal(startTime);
+        const end = parseISODateAsLocal(endTime);
 
         // ✅ Validar que las fechas sean válidas
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
@@ -46,9 +48,6 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
         }
 
-        // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede reservar fechas pasadas)
-        const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour } = await import("../utils/dateHelpers");
-        
         // Extraer la fecha local correctamente usando utilidades
         const dateString = getLocalDateString(start);
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
@@ -181,8 +180,8 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             const newBooking = await tx.daycareBooking.create({
                 data: {
                     comments,
-                    startTime: new Date(startTime),
-                    endTime: new Date(endTime),
+                    startTime: start,
+                    endTime: end,
                     userId: user_id,
                     status: "CONFIRMED",
                     slots: {
@@ -348,8 +347,9 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         }
 
         // 🔢 Determinar nuevos slots que abarca la nueva franja
-        const start = new Date(startTime);
-        const end = new Date(endTime);
+        // Parsear fechas ISO como locales para evitar problemas de timezone
+        const start = parseISODateAsLocal(startTime);
+        const end = parseISODateAsLocal(endTime);
 
         // ✅ Validar que las fechas sean válidas
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
@@ -361,9 +361,6 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
         }
 
-        // ✅ Validar que la fecha no sea pasada (solo para usuarios, admin puede modificar a fechas pasadas)
-        const { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour } = await import("../utils/dateHelpers");
-        
         // Extraer la fecha local correctamente usando utilidades
         const dateString = getLocalDateString(start);
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
@@ -518,8 +515,8 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
                 where: { id: bookingId },
                 data: {
                     comments,
-                    startTime: new Date(startTime),
-                    endTime: new Date(endTime),
+                    startTime: start,
+                    endTime: end,
                     userId,
                     slots: {
                         set: [], // desconecta todos los antiguos

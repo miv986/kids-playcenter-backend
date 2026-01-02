@@ -139,3 +139,30 @@ export function getLocalDateString(date: Date): string {
   return `${localYear}-${String(localMonth).padStart(2, '0')}-${String(localDay).padStart(2, '0')}`;
 }
 
+/**
+ * Parsea una fecha ISO string interpretándola como fecha local
+ * Extrae la fecha y hora del ISO string y crea una fecha local
+ * @param isoString - String ISO (ej: "2026-01-05T10:00:00.000Z" o "2026-01-05T10:00:00Z")
+ * @returns Date en hora local con la fecha/hora extraída del ISO string
+ */
+export function parseISODateAsLocal(isoString: string): Date {
+  // Extraer fecha y hora del ISO string (formato: YYYY-MM-DDTHH:mm:ss.sssZ o YYYY-MM-DDTHH:mm:ssZ)
+  const match = isoString.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z?$/);
+  if (!match) {
+    // Si no coincide el formato, intentar parsear normalmente
+    return new Date(isoString);
+  }
+  
+  const [, year, month, day, hour, minute, second, millisecond] = match;
+  // Crear fecha local directamente (sin conversión UTC)
+  return new Date(
+    parseInt(year),
+    parseInt(month) - 1,
+    parseInt(day),
+    parseInt(hour),
+    parseInt(minute),
+    parseInt(second),
+    millisecond ? parseInt(millisecond.padEnd(3, '0')) : 0
+  );
+}
+
