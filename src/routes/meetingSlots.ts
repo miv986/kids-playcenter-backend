@@ -1,7 +1,7 @@
 import express from "express";
 import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import { getFutureSlotsFilter } from "../utils/slotFilters";
-import { getDateRange, validateNotPastDate, validateNotPastTodayDateTime, getStartOfDay } from "../utils/dateHelpers";
+import { getDateRange, validateNotPastDate, validateNotPastTodayDateTime, getStartOfDay, getEndOfDay, parseDateString } from "../utils/dateHelpers";
 import { validateMeetingSlotConflict } from "../utils/validateSlot";
 import prisma from "../utils/prisma";
 
@@ -71,16 +71,41 @@ router.post("/", authenticateUser, async (req: any, res) => {
 
 // ✅ Listar todos los slots
 // Si es admin, devuelve todos. Si es usuario final o no autenticado, filtra slots pasados
+// Parámetros opcionales: startDate, endDate (YYYY-MM-DD) para filtrar por rango
 router.get("/", optionalAuthenticate, async (req: any, res) => {
     try {
         const isAdmin = req.user?.role === "ADMIN";
         const now = new Date();
+        const { startDate, endDate } = req.query;
 
         const whereClause: any = {};
+        const andConditions: any[] = [];
+        
+        // Filtrar por rango de fechas si se proporciona
+        if (startDate && endDate) {
+            const { start: startOfRange } = getDateRange(startDate as string);
+            const endOfRange = getEndOfDay(parseDateString(endDate as string));
+            
+            andConditions.push({
+                date: {
+                    gte: startOfRange,
+                    lte: endOfRange,
+                }
+            });
+        }
         
         // ✅ Filtrar slots pasados solo para usuarios finales o no autenticados (no admin)
         if (!isAdmin) {
-            whereClause.AND = [getFutureSlotsFilter(now)];
+            andConditions.push(getFutureSlotsFilter(now));
+        }
+        
+        // Combinar todas las condiciones
+        if (andConditions.length > 0) {
+            if (andConditions.length === 1) {
+                Object.assign(whereClause, andConditions[0]);
+            } else {
+                whereClause.AND = andConditions;
+            }
         }
 
         const slots = await prisma.meetingSlot.findMany({

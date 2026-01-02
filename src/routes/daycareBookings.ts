@@ -7,7 +7,7 @@ import { sendTemplatedEmail } from "../service/mailing";
 import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
 import { executeWithRetry } from "../utils/transactionRetry";
-import { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour, parseISODateAsLocal } from "../utils/dateHelpers";
+import { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour, parseISODateAsLocal, parseDateString } from "../utils/dateHelpers";
 
 const router = express.Router();
 
@@ -289,12 +289,25 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
 );
 
 // LISTAR RESERVAS DAYCARE (admin ve todo, user ve solo las suyas)
+// Parámetros opcionales: startDate, endDate (YYYY-MM-DD) para filtrar por rango
 router.get("/", authenticateUser, async (req: any, res) => {
     try {
-        const where =
-            req.user.role === "ADMIN"
-                ? {} // admin ve todas
-                : { userId: req.user.id }; // user solo las suyas
+        const { startDate, endDate } = req.query;
+        
+        const where: any = req.user.role === "ADMIN"
+            ? {} // admin ve todas
+            : { userId: req.user.id }; // user solo las suyas
+        
+        // Filtrar por rango de fechas si se proporciona
+        if (startDate && endDate) {
+            const { start: startOfRange } = getDateRange(startDate as string);
+            const endOfRange = getEndOfDay(parseDateString(endDate as string));
+            
+            where.startTime = {
+                gte: startOfRange,
+                lte: endOfRange,
+            };
+        }
 
         const bookings = await prisma.daycareBooking.findMany({
             where,
@@ -786,11 +799,6 @@ router.put("/:id/attendance", authenticateUser, async (req: any, res: any) => {
 
         if (!booking) {
             return res.status(404).json({ error: "Reserva no encontrada." });
-        }
-
-        // Solo se puede marcar asistencia si la reserva está confirmada y no cancelada
-        if (booking.status === 'CANCELLED') {
-            return res.status(400).json({ error: "No se puede marcar asistencia de una reserva cancelada." });
         }
 
         const updatedBooking = await prisma.daycareBooking.update({

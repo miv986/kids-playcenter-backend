@@ -6,6 +6,7 @@ import { sendTemplatedEmail } from "../service/mailing";
 import { getBirthdayBookingCreatedEmail, getBirthdayBookingConfirmedEmail, getBirthdayBookingCancelledEmail, getBirthdayBookingCancelledEmailWithoutSlot, getBirthdayBookingCancelledEmailMinimal, getBirthdayBookingModifiedEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
 import { executeWithRetry } from "../utils/transactionRetry";
+import { getDateRange, getEndOfDay, parseDateString } from "../utils/dateHelpers";
 const router = express.Router();
 
 //
@@ -776,12 +777,48 @@ router.get("/getBirthdayBookings", authenticateUser, async (req: any, res) => {
         return res.status(403).json({ error: 'Forbidden' });
     }
     try {
+        const { startDate, endDate } = req.query;
+        
+        const whereClause: any = {};
+        
+        // Filtrar por rango de fechas si se proporciona
+        if (startDate && endDate) {
+            const { start: startOfRange } = getDateRange(startDate as string);
+            const endOfRange = getEndOfDay(parseDateString(endDate as string));
+            
+            // BirthdayBooking puede tener slot opcional (slotId Int?)
+            whereClause.OR = [
+                // Reservas con slot en el rango
+                {
+                    slot: {
+                        startTime: {
+                            gte: startOfRange,
+                            lte: endOfRange,
+                        }
+                    }
+                },
+                // Reservas sin slot pero con createdAt en el rango
+                {
+                    AND: [
+                        { slotId: null },
+                        {
+                            createdAt: {
+                                gte: startOfRange,
+                                lte: endOfRange,
+                            }
+                        }
+                    ]
+                }
+            ];
+        }
+        
         const birthdayBookings = await prisma.birthdayBooking.findMany({
+            where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
             include: { slot: true }
         });
         res.json(birthdayBookings);
     } catch (err) {
-        console.error("Error en GET /bookings:", err);
+        console.error("Error en GET /bookings/getBirthdayBookings:", err);
         res.status(500).json({ error: "Internal server error" });
     }
 });

@@ -2,7 +2,7 @@ import express from "express";
 import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import { validateDTO } from "../middleware/validation";
 import { CreateMeetingBookingDTO } from "../dtos/CreateMeetingBookingDTO";
-import { getStartOfDay, isToday, isPastDateTime, getDateRange, validateNotPastDate, validateNotPastTodayDateTime } from "../utils/dateHelpers";
+import { getStartOfDay, isToday, isPastDateTime, getDateRange, getEndOfDay, parseDateString, validateNotPastDate, validateNotPastTodayDateTime } from "../utils/dateHelpers";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getMeetingBookingCreatedEmail, getMeetingBookingModifiedEmail, getMeetingBookingCancelledEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
@@ -152,13 +152,33 @@ router.post("/", optionalAuthenticate, validateDTO(CreateMeetingBookingDTO), asy
 });
 
 // LISTAR TODAS LAS RESERVAS (ADMIN)
+// Parámetros opcionales: startDate, endDate (YYYY-MM-DD) para filtrar por rango
 router.get("/", authenticateUser, async (req: any, res: any) => {
     if (req.user.role !== 'ADMIN') {
         return res.status(403).json({ error: 'Forbidden' });
     }
 
     try {
+        const { startDate, endDate } = req.query;
+        
+        const whereClause: any = {};
+        
+        // Filtrar por rango de fechas si se proporciona
+        if (startDate && endDate) {
+            const { start: startOfRange } = getDateRange(startDate as string);
+            const endOfRange = getEndOfDay(parseDateString(endDate as string));
+            
+            // MeetingBooking siempre tiene slot (slotId es obligatorio)
+            whereClause.slot = {
+                startTime: {
+                    gte: startOfRange,
+                    lte: endOfRange,
+                }
+            };
+        }
+        
         const bookings = await prisma.meetingBooking.findMany({
+            where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
             include: {
                 slot: true
             },
