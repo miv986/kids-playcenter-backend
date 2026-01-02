@@ -334,7 +334,7 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             return res.status(400).json({ error: "No se puede modificar una reserva cerrada (CLOSED)." });
         }
 
-        const { comments, startTime, endTime, childrenIds } = req.body;
+        const { comments, startTime, endTime, slotId, childrenIds } = req.body;
         const userId = req.user.id;
 
         // ✅ Validaciones básicas
@@ -396,9 +396,35 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         }
 
         // ✅ Calcular horas usando utilidades para consistencia
-        const startHour = getLocalHour(start);
-        const endHour = getLocalHour(end);
-        const expectedSlotsCount = endHour - startHour;
+        // Si viene slotId, usarlo como referencia para evitar problemas de zona horaria (igual que en creación)
+        let startHour: number;
+        let endHour: number;
+        let expectedSlotsCount: number;
+
+        if (slotId) {
+            // Usar el slotId para obtener el slot y calcular el rango desde la BD
+            const referenceSlot = await prisma.daycareSlot.findUnique({
+                where: { id: slotId }
+            });
+
+            if (!referenceSlot) {
+                return res.status(404).json({ error: "Slot no encontrado." });
+            }
+
+            // Calcular el rango desde el slot de referencia (usa el hour real de la BD)
+            startHour = referenceSlot.hour;
+            // Calcular endHour basado en la diferencia entre startTime y endTime
+            const timeDiffMs = end.getTime() - start.getTime();
+            const timeDiffHours = Math.floor(timeDiffMs / (1000 * 60 * 60));
+            endHour = startHour + timeDiffHours;
+            expectedSlotsCount = timeDiffHours;
+        } else {
+            // Calcular desde startTime y endTime usando utilidades para consistencia
+            startHour = getLocalHour(start);
+            endHour = getLocalHour(end);
+            expectedSlotsCount = endHour - startHour;
+        }
+        
         const spotsNeeded = childrenIds.length;
 
         // ✅ CRÍTICO: Mover toda la validación DENTRO de la transacción para prevenir race conditions

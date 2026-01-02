@@ -18,6 +18,10 @@ export class UpdateDaycareBookingDTO {
     endTime?: string;
 
     @IsOptional()
+    @IsInt({ message: "El slotId debe ser un número entero." })
+    slotId?: number;
+
+    @IsOptional()
     @IsArray()
     @ArrayMinSize(1, { message: "Debe haber al menos un hijo." })
     @IsInt({ each: true })
