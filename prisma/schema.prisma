@@ -28,6 +28,8 @@ model User {
   updatedAt                DateTime         @updatedAt
   emailVerifyToken         String?
   isEmailVerified          Boolean          @default(false)
+  passwordResetToken       String?
+  passwordResetExpires     DateTime?
   allergies                String?
   dateOfBirth              DateTime?
   emergency_contact_name_1 String?
@@ -54,16 +56,27 @@ model DaycareBooking {
   endTime          DateTime
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
-  userId           Int
+  userId           Int?
   attendanceStatus AttendanceStatus @default(PENDING)
-  user             User             @relation(fields: [userId], references: [id])
+  user             User?            @relation(fields: [userId], references: [id])
   children         User[]           @relation("DaycareBookingChildren")
   slots            DaycareSlot[]    @relation("DaycareSlotBookings")
+  
+  // Campos para reservas manuales (sin usuario registrado)
+  isManual                 Boolean  @default(false)
+  manualClientName         String?
+  manualNumberOfChildren   Int?
+  manualChildName          String?
+  manualParent1Name        String?
+  manualParent1Phone       String?
+  manualParent2Name        String?
+  manualParent2Phone       String?
 
   @@index([userId, status])
   @@index([startTime, endTime])
   @@index([status])
   @@index([createdAt])
+  @@index([isManual])
 }
 
 model DaycareSlot {

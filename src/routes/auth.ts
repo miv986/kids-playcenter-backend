@@ -6,7 +6,7 @@ import prisma from "../utils/prisma";
 const router = express.Router();
 import crypto from "crypto";
 import { sendTemplatedEmail } from "../service/mailing";
-import { getVerificationEmail } from "../service/emailTemplates";
+import { getVerificationEmail, getPasswordResetEmail } from "../service/emailTemplates";
 import { validateDTO } from "../middleware/validation";
 import { RegisterDTO } from "../dtos/RegisterDTO";
 import { authenticateUser } from "../middleware/auth";
@@ -288,6 +288,114 @@ router.post("/refresh", async (req, res) => {
 });
 
 
+
+// POST /api/auth/forgot-password
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: "Email es requerido" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    
+    // Por seguridad, siempre devolvemos éxito aunque el email no exista
+    if (!user) {
+      return res.json({ message: "Si el email existe, recibirás un enlace de recuperación" });
+    }
+
+    if (user.role !== "ADMIN" && user.role !== "USER") {
+      return res.json({ message: "Si el email existe, recibirás un enlace de recuperación" });
+    }
+
+    // Generar token de recuperación
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+
+    await prisma.user.update({
+      where: { email },
+      data: {
+        passwordResetToken: resetToken,
+        passwordResetExpires: resetExpires,
+      },
+    });
+
+    // Construir el enlace de recuperación
+    const frontendUrl = process.env.NODE_ENV === 'development'
+      ? "http://localhost:3000"
+      : process.env.FRONTEND_URL || process.env.WEBSITE_URL || "https://somriuresicolors.es";
+    
+    const cleanFrontendUrl = frontendUrl.replace(/\/$/, '');
+    const resetLink = `${cleanFrontendUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+
+    // Enviar email de recuperación
+    try {
+      const emailData = getPasswordResetEmail(user.name, resetLink);
+      await sendTemplatedEmail(
+        email,
+        "Recuperación de contraseña - Somriures & Colors",
+        emailData
+      );
+      console.log(`✅ Email de recuperación de contraseña enviado a ${email}`);
+    } catch (emailError) {
+      console.error("Error enviando email de recuperación:", emailError);
+      // No fallar si falla el email
+    }
+
+    res.json({ message: "Si el email existe, recibirás un enlace de recuperación" });
+  } catch (err) {
+    console.error("Error en forgot-password:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/auth/reset-password
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { token, email, password } = req.body;
+
+    if (!token || !email || !password) {
+      return res.status(400).json({ error: "Token, email y contraseña son requeridos" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      return res.status(404).json({ error: "Usuario no encontrado" });
+    }
+
+    if (!user.passwordResetToken || user.passwordResetToken !== token) {
+      return res.status(400).json({ error: "Token inválido" });
+    }
+
+    if (!user.passwordResetExpires || user.passwordResetExpires < new Date()) {
+      return res.status(400).json({ error: "El token ha expirado. Solicita uno nuevo" });
+    }
+
+    // Hashear nueva contraseña
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Actualizar contraseña y limpiar token
+    await prisma.user.update({
+      where: { email },
+      data: {
+        password: hashedPassword,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      },
+    });
+
+    res.json({ message: "Contraseña actualizada correctamente" });
+  } catch (err) {
+    console.error("Error en reset-password:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // POST /api/auth/logout
 router.post("/logout", async (_req, res) => {

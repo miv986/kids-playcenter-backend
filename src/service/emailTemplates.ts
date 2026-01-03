@@ -213,6 +213,26 @@ export function getVerificationEmail(name: string, verifyLink: string): EmailTem
 }
 
 /**
+ * Email de recuperación de contraseña
+ */
+export function getPasswordResetEmail(name: string, resetLink: string): EmailTemplateData {
+    return {
+        title: "Recuperación de contraseña",
+        greeting: `Hola ${name}`,
+        content: `
+            <p>Has solicitado recuperar tu contraseña en <strong>Somriures & Colors</strong>.</p>
+            <p>Haz clic en el botón de abajo para restablecer tu contraseña. Este enlace expirará en 1 hora.</p>
+        `,
+        actionButton: {
+            text: "Restablecer Contraseña",
+            url: resetLink,
+            color: "#2563eb"
+        },
+        footerMessage: "Si no solicitaste este cambio, puedes ignorar este email. Tu contraseña no será modificada."
+    };
+}
+
+/**
  * Email de confirmación de reserva de cumpleaños creada (pendiente de confirmación)
  */
 export function getBirthdayBookingCreatedEmail(

@@ -1,48 +1,31 @@
 import {
     IsInt,
+    IsNotEmpty,
     IsOptional,
     IsString,
     IsDateString,
     MaxLength,
-    IsArray,
-    ArrayMinSize,
     Min,
 } from "class-validator";
 
-export class UpdateDaycareBookingDTO {
-    @IsOptional()
+export class CreateManualDaycareBookingDTO {
     @IsDateString({}, { message: "La fecha/hora de inicio no es válida." })
-    startTime?: string;
+    @IsNotEmpty({ message: "El campo startTime es obligatorio." })
+    startTime!: string;
 
-    @IsOptional()
     @IsDateString({}, { message: "La fecha/hora de fin no es válida." })
-    endTime?: string;
+    @IsNotEmpty({ message: "El campo endTime es obligatorio." })
+    endTime!: string;
 
-    @IsOptional()
-    @IsInt({ message: "El slotId debe ser un número entero." })
-    slotId?: number;
-
-    @IsOptional()
-    @IsArray()
-    @ArrayMinSize(1, { message: "Debe haber al menos un hijo." })
-    @IsInt({ each: true })
-    childrenIds?: number[];
-
-    @IsOptional()
-    @IsString()
-    @MaxLength(500, { message: "El comentario no puede exceder los 500 caracteres." })
-    comments?: string;
-
-    // Campos opcionales para reservas manuales
-    @IsOptional()
     @IsInt({ message: "El número de niños debe ser un entero." })
     @Min(1, { message: "Debe haber al menos un niño." })
-    numberOfChildren?: number;
+    @IsNotEmpty({ message: "El campo numberOfChildren es obligatorio." })
+    numberOfChildren!: number;
 
-    @IsOptional()
-    @IsString()
-    @MaxLength(200, { message: "El nombre del cliente no puede exceder los 200 caracteres." })
-    clientName?: string;
+    @IsString({ message: "El nombre del cliente debe ser un string." })
+    @IsNotEmpty({ message: "El campo clientName es obligatorio." })
+    @MaxLength(200, { message: "El nombre no puede exceder los 200 caracteres." })
+    clientName!: string;
 
     @IsOptional()
     @IsString()
@@ -68,5 +51,15 @@ export class UpdateDaycareBookingDTO {
     @IsString()
     @MaxLength(50, { message: "El teléfono del padre/madre 2 no puede exceder los 50 caracteres." })
     parent2Phone?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(500, { message: "El comentario no puede exceder los 500 caracteres." })
+    comments?: string;
+
+    @IsOptional()
+    @IsInt({ message: "El slotId debe ser un número entero." })
+    slotId?: number;
 }
+
 

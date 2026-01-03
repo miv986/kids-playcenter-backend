@@ -2,6 +2,7 @@ import express from "express";
 import { authenticateUser } from "../middleware/auth";
 import { validateDTO } from "../middleware/validation";
 import { CreateDaycareBookingDTO } from "../dtos/CreateDaycareBookingDTO";
+import { CreateManualDaycareBookingDTO } from "../dtos/CreateManualDaycareBookingDTO";
 import { UpdateDaycareBookingDTO } from "../dtos/UpdateDaycareBookingDTO";
 import { sendTemplatedEmail } from "../service/mailing";
 import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } from "../service/emailTemplates";
@@ -288,6 +289,200 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
 }
 );
 
+//CREAR RESERVA DAYCARE MANUAL (ADMIN)
+router.post("/manual", authenticateUser, validateDTO(CreateManualDaycareBookingDTO), async (req: any, res: any) => {
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'Solo los administradores pueden crear reservas manuales.' });
+    }
+
+    try {
+        const { comments, startTime, endTime, slotId, numberOfChildren, clientName, childName, parent1Name, parent1Phone, parent2Name, parent2Phone } = req.body;
+
+        if (!startTime || !endTime) {
+            return res.status(400).json({ error: "Debes proporcionar fecha y hora de inicio y fin." });
+        }
+
+        const start = parseISODateAsLocal(startTime);
+        const end = parseISODateAsLocal(endTime);
+
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            return res.status(400).json({ error: "Fechas inválidas. Por favor, verifica las fechas proporcionadas." });
+        }
+
+        if (start >= end) {
+            return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
+        }
+
+        const dateString = getLocalDateString(start);
+        const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
+        const spotsToDiscount = numberOfChildren;
+
+        let startHour: number;
+        let endHour: number;
+        let expectedSlotsCount: number;
+
+        if (slotId) {
+            const referenceSlot = await prisma.daycareSlot.findUnique({
+                where: { id: slotId }
+            });
+
+            if (!referenceSlot) {
+                return res.status(404).json({ error: "Slot no encontrado." });
+            }
+
+            startHour = referenceSlot.hour;
+            const timeDiffMs = end.getTime() - start.getTime();
+            const timeDiffHours = Math.floor(timeDiffMs / (1000 * 60 * 60));
+            endHour = startHour + timeDiffHours;
+            expectedSlotsCount = timeDiffHours;
+        } else {
+            startHour = getLocalHour(start);
+            endHour = getLocalHour(end);
+            expectedSlotsCount = endHour - startHour;
+        }
+
+        const booking = await executeWithRetry(() => prisma.$transaction(async (tx) => {
+            // Validar slots DENTRO de la transacción
+            const allSlotsByDate = await tx.daycareSlot.findMany({
+                where: {
+                    date: {
+                        gte: startOfDay,
+                        lte: endOfDay
+                    },
+                    hour: {
+                        gte: startHour,
+                        lt: endHour
+                    }
+                },
+            });
+
+            const allSlots = allSlotsByDate.filter(s => s.status === "OPEN");
+
+            if (allSlots.length !== expectedSlotsCount) {
+                const allSlotsByStatus = allSlotsByDate.filter(s => s.status !== 'OPEN');
+                
+                if (allSlotsByDate.length > 0 && allSlots.length < allSlotsByDate.length) {
+                    const closedSlots = allSlotsByStatus;
+                    throw new Error(`Los slots para el horario seleccionado no están disponibles (estado: ${closedSlots.map(s => s.status).join(', ')}).`);
+                }
+                
+                throw new Error(`No hay slots disponibles para el horario seleccionado el día ${dateString}. Faltan ${expectedSlotsCount - allSlots.length} slot(s).`);
+            }
+
+            // Validar plazas disponibles
+            const slotsWithSpots = allSlots.filter(slot => slot.availableSpots >= spotsToDiscount);
+            
+            if (slotsWithSpots.length !== expectedSlotsCount) {
+                const slotsWithoutSpots = allSlots.filter(slot => slot.availableSpots < spotsToDiscount);
+                const hoursWithoutSpots = slotsWithoutSpots.map(s => s.hour).join(", ");
+                throw new Error(`No hay suficientes plazas disponibles. Se necesitan ${spotsToDiscount} plaza(s) pero los slots de las ${hoursWithoutSpots}:00 no tienen suficientes plazas disponibles.`);
+            }
+
+            const slots = slotsWithSpots;
+            const slotIds = slots.map(s => s.id);
+
+            // Validar que no haya reserva duplicada para estos slots (solo para manuales)
+            const existingBooking = await tx.daycareBooking.findFirst({
+                where: {
+                    isManual: true,
+                    slots: {
+                        some: {
+                            id: { in: slotIds }
+                        }
+                    },
+                    status: {
+                        not: 'CANCELLED'
+                    }
+                },
+            });
+
+            if (existingBooking) {
+                throw new Error("Ya existe una reserva manual para ese horario. Verifica los slots disponibles.");
+            }
+
+            // Crear la reserva manual
+            const newBooking = await tx.daycareBooking.create({
+                data: {
+                    comments,
+                    startTime: start,
+                    endTime: end,
+                    userId: null, // Sin usuario
+                    status: "CONFIRMED",
+                    isManual: true,
+                    manualClientName: clientName,
+                    manualNumberOfChildren: numberOfChildren,
+                    manualChildName: childName || null,
+                    manualParent1Name: parent1Name || null,
+                    manualParent1Phone: parent1Phone || null,
+                    manualParent2Name: parent2Name || null,
+                    manualParent2Phone: parent2Phone || null,
+                    slots: {
+                        connect: slots.map((s) => ({ id: s.id }))
+                    },
+                },
+                include: { 
+                    slots: true
+                },
+            });
+
+            // Descontar plazas de cada slot
+            for (const s of slots) {
+                const updatedSlot = await tx.daycareSlot.update({
+                    where: { id: s.id },
+                    data: { availableSpots: { decrement: spotsToDiscount } },
+                });
+                
+                if (updatedSlot.availableSpots < 0) {
+                    throw new Error(`Error: Las plazas disponibles no pueden ser negativas. Slot ${s.id} tiene ${updatedSlot.availableSpots} plazas.`);
+                }
+                
+                if (updatedSlot.availableSpots > updatedSlot.capacity) {
+                    throw new Error(`Error: Las plazas disponibles (${updatedSlot.availableSpots}) no pueden exceder la capacidad (${updatedSlot.capacity}). Slot ${s.id}.`);
+                }
+            }
+            
+            return newBooking;
+        }, {
+            isolationLevel: 'Serializable',
+            timeout: 10000
+        }));
+
+        return res.status(201).json({
+            message: "✅ Reserva manual creada correctamente.",
+            booking: booking,
+        });
+    } catch (err: any) {
+        console.error("Error al crear reserva manual:", err);
+        
+        if (err.message) {
+            if (err.message.includes("No hay slots disponibles") || 
+                err.message.includes("no están disponibles") ||
+                err.message.includes("No hay suficientes plazas") ||
+                err.message.includes("Ya existe una reserva manual") ||
+                err.message.includes("no pueden ser negativas")) {
+                return res.status(400).json({ error: err.message });
+            }
+        }
+        
+        if (err.code === 'P2002') {
+            return res.status(400).json({ error: "Ya existe una reserva con estos datos." });
+        }
+        if (err.code === 'P2025') {
+            return res.status(404).json({ error: "Uno de los recursos no fue encontrado." });
+        }
+        if (err.code === 'P2003') {
+            return res.status(400).json({ error: "Referencia inválida. Verifica los IDs proporcionados." });
+        }
+        if (err.code === 'P2034') {
+            return res.status(409).json({ 
+                error: "La reserva no pudo completarse debido a un conflicto. Por favor, intenta de nuevo." 
+            });
+        }
+        
+        return res.status(500).json({ error: "Error interno del servidor." });
+    } 
+});
+
 // LISTAR RESERVAS DAYCARE (admin ve todo, user ve solo las suyas)
 // Parámetros opcionales: startDate, endDate (YYYY-MM-DD) para filtrar por rango
 router.get("/", authenticateUser, async (req: any, res) => {
@@ -347,12 +542,15 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             return res.status(400).json({ error: "No se puede modificar una reserva cerrada (CLOSED)." });
         }
 
-        const { comments, startTime, endTime, slotId, childrenIds } = req.body;
+        const { comments, startTime, endTime, slotId, childrenIds, numberOfChildren, clientName, childName, parent1Name, parent1Phone, parent2Name, parent2Phone } = req.body;
         const userId = req.user.id;
 
         // ✅ Validaciones básicas
-        if (!childrenIds || !Array.isArray(childrenIds) || childrenIds.length === 0) {
-            return res.status(400).json({ error: "Debes seleccionar al menos un niño para la reserva." });
+        // Las reservas manuales no requieren childrenIds
+        if (!existingBooking.isManual) {
+            if (!childrenIds || !Array.isArray(childrenIds) || childrenIds.length === 0) {
+                return res.status(400).json({ error: "Debes seleccionar al menos un niño para la reserva." });
+            }
         }
 
         if (!startTime || !endTime) {
@@ -378,6 +576,11 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         const dateString = getLocalDateString(start);
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
         const date = getStartOfDay(start);
+
+        // ✅ Validar permisos: solo admin puede editar reservas manuales
+        if (existingBooking.isManual && req.user.role !== 'ADMIN') {
+            return res.status(403).json({ error: "Solo los administradores pueden modificar reservas manuales." });
+        }
 
         if (req.user.role !== 'ADMIN') {
             const now = getStartOfDay();
@@ -438,7 +641,9 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             expectedSlotsCount = endHour - startHour;
         }
         
-        const spotsNeeded = childrenIds.length;
+        const spotsNeeded = existingBooking.isManual
+            ? (existingBooking.manualNumberOfChildren || 0)
+            : (childrenIds?.length || 0);
 
         // ✅ CRÍTICO: Mover toda la validación DENTRO de la transacción para prevenir race conditions
         // Usar retry logic para manejar conflictos de serialización automáticamente
@@ -509,7 +714,9 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
 
             // 🟢 Devolver plazas de slots antiguos
             // ✅ Validar que no exceda capacidad después de incrementar
-            const oldChildrenCount = existingBooking.children.length;
+            const oldChildrenCount = existingBooking.isManual 
+                ? (existingBooking.manualNumberOfChildren || 0)
+                : existingBooking.children.length;
             for (const oldSlot of existingBooking.slots) {
                 const updatedOldSlot = await tx.daycareSlot.update({
                     where: { id: oldSlot.id },
@@ -531,7 +738,9 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
 
             // 🔴 Restar plazas de los nuevos slots
             // ✅ Validar que availableSpots no vaya a negativo y no exceda capacidad
-            const newChildrenCount = childrenIds.length;
+            const newChildrenCount = existingBooking.isManual
+                ? (existingBooking.manualNumberOfChildren || 0)
+                : (childrenIds?.length || 0);
             for (const newSlot of newSlots) {
                 const updatedSlot = await tx.daycareSlot.update({
                     where: { id: newSlot.id },
@@ -550,22 +759,51 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             }
 
             // 🔁 Actualizar la reserva
+            const updateData: any = {
+                comments,
+                startTime: start,
+                endTime: end,
+                slots: {
+                    set: [], // desconecta todos los antiguos
+                    connect: newSlots.map((s) => ({ id: s.id })), // conecta los nuevos
+                },
+            };
+
+            // Solo actualizar userId si no es reserva manual
+            if (!existingBooking.isManual) {
+                updateData.userId = userId;
+                updateData.children = {
+                    set: [], // desconecta todos los antiguos
+                    connect: childrenIds.map((id: number) => ({ id })), // conecta los nuevos
+                };
+            } else {
+                // Actualizar campos manuales si se proporcionan
+                if (numberOfChildren !== undefined) {
+                    updateData.manualNumberOfChildren = numberOfChildren;
+                }
+                if (clientName !== undefined) {
+                    updateData.manualClientName = clientName;
+                }
+                if (childName !== undefined) {
+                    updateData.manualChildName = childName;
+                }
+                if (parent1Name !== undefined) {
+                    updateData.manualParent1Name = parent1Name;
+                }
+                if (parent1Phone !== undefined) {
+                    updateData.manualParent1Phone = parent1Phone;
+                }
+                if (parent2Name !== undefined) {
+                    updateData.manualParent2Name = parent2Name;
+                }
+                if (parent2Phone !== undefined) {
+                    updateData.manualParent2Phone = parent2Phone;
+                }
+            }
+
             const booking = await tx.daycareBooking.update({
                 where: { id: bookingId },
-                data: {
-                    comments,
-                    startTime: start,
-                    endTime: end,
-                    userId,
-                    slots: {
-                        set: [], // desconecta todos los antiguos
-                        connect: newSlots.map((s) => ({ id: s.id })), // conecta los nuevos
-                    },
-                    children: {
-                        set: [], // desconecta todos los antiguos
-                        connect: childrenIds.map((id: number) => ({ id })), // conecta los nuevos
-                    },
-                },
+                data: updateData,
                 include: { user: { include: { children: true } }, slots: true, children: true },
             });
 
