@@ -9,30 +9,29 @@ export interface EmailTemplateData {
 
 /**
  * Formatea una fecha a hora local (HH:MM) en zona horaria de Madrid
- * Solución estándar para emails de negocios locales: muestra la hora del negocio
- * con la zona horaria indicada para claridad internacional.
+ * Usa el mismo método que los slots: getHours() directamente del Date object
+ * Cuando Prisma devuelve un Date, JavaScript ya convierte el timestamp UTC a hora local
  * 
  * Nota: Los emails HTML estáticos no pueden detectar la zona horaria del destinatario
  * automáticamente (JavaScript está bloqueado en la mayoría de clientes de email).
  * Esta es la práctica estándar usada por servicios como restaurantes, eventos, etc.
  */
 function formatTime(date: Date): string {
-    const time = date.toLocaleTimeString('es-ES', {
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'Europe/Madrid',
-        hour12: false
-    });
-
+    // Usar getHours() directamente, igual que los slots
+    // JavaScript convierte automáticamente el timestamp UTC de Prisma a hora local del sistema
+    const localDate = date instanceof Date ? date : new Date(date);
+    const hours = String(localDate.getHours()).padStart(2, '0');
+    const minutes = String(localDate.getMinutes()).padStart(2, '0');
+    
     // Obtener la zona horaria (CET en invierno, CEST en verano)
     const formatter = new Intl.DateTimeFormat('es-ES', {
         timeZone: 'Europe/Madrid',
         timeZoneName: 'short'
     });
     const parts = formatter.formatToParts(date);
-    const timeZoneName = parts.find(part => part.type === 'timeZoneName')?.value || 'CET';
+    const timeZoneName = parts.find(p => p.type === 'timeZoneName')?.value || 'CET';
 
-    return `${time} (${timeZoneName})`;
+    return `${hours}:${minutes} (${timeZoneName})`;
 }
 
 /**

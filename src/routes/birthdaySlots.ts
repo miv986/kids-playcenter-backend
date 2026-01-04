@@ -75,6 +75,7 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
         const andConditions: any[] = [];
         
         // Filtrar por rango de fechas si se proporciona
+        // Si no se proporciona, usar rango por defecto: 12 meses atrás y 12 meses adelante
         if (startDate && endDate) {
             const { start: startOfRange } = getDateRange(startDate as string);
             const endOfRange = getEndOfDay(parseDateString(endDate as string));
@@ -83,6 +84,21 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
                 date: {
                     gte: startOfRange,
                     lte: endOfRange,
+                }
+            });
+        } else {
+            // Rango por defecto: 12 meses atrás y 12 meses adelante
+            const { getStartOfDay } = await import("../utils/dateHelpers");
+            const today = getStartOfDay();
+            const twelveMonthsAgo = new Date(today);
+            twelveMonthsAgo.setMonth(today.getMonth() - 12);
+            const twelveMonthsAhead = new Date(today);
+            twelveMonthsAhead.setMonth(today.getMonth() + 12);
+            
+            andConditions.push({
+                date: {
+                    gte: twelveMonthsAgo,
+                    lte: twelveMonthsAhead,
                 }
             });
         }
@@ -103,7 +119,11 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
 
         const slots = await prisma.birthdaySlot.findMany({
             where: whereClause,
-            include: { booking: true } // para ver si ya tienen reserva
+            include: { booking: true }, // para ver si ya tienen reserva
+            orderBy: [
+                { date: "asc" },
+                { startTime: "asc" }
+            ]
         });
         res.json(slots);
     } catch (err) {
@@ -130,7 +150,11 @@ router.get("/availableSlots", async (req: any, res) => {
 
         const slots = await prisma.birthdaySlot.findMany({
             where: whereClause,
-            include: { booking: true }
+            include: { booking: true },
+            orderBy: [
+                { date: "asc" },
+                { startTime: "asc" }
+            ]
         });
         res.json(slots);
     } catch (err) {

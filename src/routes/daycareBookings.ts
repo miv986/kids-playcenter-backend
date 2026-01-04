@@ -8,7 +8,19 @@ import { sendTemplatedEmail } from "../service/mailing";
 import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
 import { executeWithRetry } from "../utils/transactionRetry";
-import { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour, parseISODateAsLocal, parseDateString } from "../utils/dateHelpers";
+import { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour, parseDateString } from "../utils/dateHelpers";
+
+// Helper para formatear fechas igual que los slots
+function formatAsLocalISO(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
 
 const router = express.Router();
 
@@ -35,9 +47,8 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             return res.status(400).json({ error: "Debes proporcionar fecha y hora de inicio y fin." });
         }
 
-        // Parsear fechas ISO como locales para evitar problemas de timezone
-        const start = parseISODateAsLocal(startTime);
-        const end = parseISODateAsLocal(endTime);
+        const start = new Date(startTime);
+        const end = new Date(endTime);
 
         // ✅ Validar que las fechas sean válidas
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
@@ -249,9 +260,14 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             }
         }
 
+        // Formatear fechas para evitar problemas de timezone
         return res.status(201).json({
             message: "✅ Reserva creada correctamente.",
-            booking: booking,
+            booking: {
+                ...booking,
+                startTime: formatAsLocalISO(booking.startTime),
+                endTime: formatAsLocalISO(booking.endTime),
+            },
         });
     } catch (err: any) {
         console.error("Error al crear reserva:", err);
@@ -302,8 +318,8 @@ router.post("/manual", authenticateUser, validateDTO(CreateManualDaycareBookingD
             return res.status(400).json({ error: "Debes proporcionar fecha y hora de inicio y fin." });
         }
 
-        const start = parseISODateAsLocal(startTime);
-        const end = parseISODateAsLocal(endTime);
+        const start = new Date(startTime);
+        const end = new Date(endTime);
 
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
             return res.status(400).json({ error: "Fechas inválidas. Por favor, verifica las fechas proporcionadas." });
@@ -447,9 +463,14 @@ router.post("/manual", authenticateUser, validateDTO(CreateManualDaycareBookingD
             timeout: 10000
         }));
 
+        // Formatear fechas para evitar problemas de timezone
         return res.status(201).json({
             message: "✅ Reserva manual creada correctamente.",
-            booking: booking,
+            booking: {
+                ...booking,
+                startTime: formatAsLocalISO(booking.startTime),
+                endTime: formatAsLocalISO(booking.endTime),
+            },
         });
     } catch (err: any) {
         console.error("Error al crear reserva manual:", err);
@@ -494,6 +515,7 @@ router.get("/", authenticateUser, async (req: any, res) => {
             : { userId: req.user.id }; // user solo las suyas
         
         // Filtrar por rango de fechas si se proporciona
+        // Si no se proporciona, usar rango por defecto: 12 meses atrás y 12 meses adelante
         if (startDate && endDate) {
             const { start: startOfRange } = getDateRange(startDate as string);
             const endOfRange = getEndOfDay(parseDateString(endDate as string));
@@ -502,15 +524,38 @@ router.get("/", authenticateUser, async (req: any, res) => {
                 gte: startOfRange,
                 lte: endOfRange,
             };
+        } else {
+            // Rango por defecto: 12 meses atrás y 12 meses adelante
+            const today = getStartOfDay();
+            const twelveMonthsAgo = new Date(today);
+            twelveMonthsAgo.setMonth(today.getMonth() - 12);
+            const twelveMonthsAhead = new Date(today);
+            twelveMonthsAhead.setMonth(today.getMonth() + 12);
+            
+            where.startTime = {
+                gte: twelveMonthsAgo,
+                lte: twelveMonthsAhead,
+            };
         }
 
         const bookings = await prisma.daycareBooking.findMany({
             where,
             include: { user: { include: { children: true } }, slots: true, children: true },
-            orderBy: { startTime: "asc" },
+            orderBy: [
+                { startTime: "asc" }
+            ],
         });
 
-        res.json(bookings);
+        // Formatear fechas igual que los slots: extraer hora con getHours()
+        const formattedBookings = bookings.map(booking => {
+            return {
+                ...booking,
+                startTime: formatAsLocalISO(booking.startTime),
+                endTime: formatAsLocalISO(booking.endTime),
+            };
+        });
+
+        res.json(formattedBookings);
     } catch (err) {
         console.error("Error al listar reservas:", err);
         res.status(500).json({ error: "Internal server error" });
@@ -558,9 +603,8 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
         }
 
         // 🔢 Determinar nuevos slots que abarca la nueva franja
-        // Parsear fechas ISO como locales para evitar problemas de timezone
-        const start = parseISODateAsLocal(startTime);
-        const end = parseISODateAsLocal(endTime);
+        const start = new Date(startTime);
+        const end = new Date(endTime);
 
         // ✅ Validar que las fechas sean válidas
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
@@ -850,9 +894,15 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             console.warn(`⚠️ No se puede enviar email de modificación: user o email no disponible. Booking ID: ${bookingId}`);
         }
 
+        // Formatear fechas para evitar problemas de timezone
+        const bookingToReturn = bookingWithUser || updatedBooking;
         return res.json({
             message: "✅ Reserva modificada correctamente.",
-            booking: bookingWithUser || updatedBooking,
+            booking: {
+                ...bookingToReturn,
+                startTime: formatAsLocalISO(bookingToReturn.startTime),
+                endTime: formatAsLocalISO(bookingToReturn.endTime),
+            },
         });
     } catch (err: any) {
         console.error("Error al modificar reserva:", err);
@@ -1045,9 +1095,14 @@ router.put("/:id/attendance", authenticateUser, async (req: any, res: any) => {
             include: { user: { include: { children: true } }, slots: true, children: true },
         });
 
+        // Formatear fechas para evitar problemas de timezone
         return res.json({
             message: `✅ Asistencia marcada como ${attendanceStatus === 'ATTENDED' ? 'asistió' : attendanceStatus === 'NOT_ATTENDED' ? 'no asistió' : 'pendiente'}.`,
-            booking: updatedBooking,
+            booking: {
+                ...updatedBooking,
+                startTime: formatAsLocalISO(updatedBooking.startTime),
+                endTime: formatAsLocalISO(updatedBooking.endTime),
+            },
         });
     } catch (err: any) {
         console.error("Error al marcar asistencia:", err);

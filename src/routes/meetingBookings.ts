@@ -164,6 +164,7 @@ router.get("/", authenticateUser, async (req: any, res: any) => {
         const whereClause: any = {};
         
         // Filtrar por rango de fechas si se proporciona
+        // Si no se proporciona, usar rango por defecto: 12 meses atrás y 12 meses adelante
         if (startDate && endDate) {
             const { start: startOfRange } = getDateRange(startDate as string);
             const endOfRange = getEndOfDay(parseDateString(endDate as string));
@@ -175,6 +176,21 @@ router.get("/", authenticateUser, async (req: any, res: any) => {
                     lte: endOfRange,
                 }
             };
+        } else {
+            // Rango por defecto: 12 meses atrás y 12 meses adelante
+            const today = getStartOfDay();
+            const twelveMonthsAgo = new Date(today);
+            twelveMonthsAgo.setMonth(today.getMonth() - 12);
+            const twelveMonthsAhead = new Date(today);
+            twelveMonthsAhead.setMonth(today.getMonth() + 12);
+            
+            // MeetingBooking siempre tiene slot (slotId es obligatorio)
+            whereClause.slot = {
+                startTime: {
+                    gte: twelveMonthsAgo,
+                    lte: twelveMonthsAhead,
+                }
+            };
         }
         
         const bookings = await prisma.meetingBooking.findMany({
@@ -182,9 +198,9 @@ router.get("/", authenticateUser, async (req: any, res: any) => {
             include: {
                 slot: true
             },
-            orderBy: {
-                createdAt: 'desc'
-            }
+            orderBy: [
+                { createdAt: "asc" }
+            ]
         });
         res.json(bookings);
     } catch (err) {

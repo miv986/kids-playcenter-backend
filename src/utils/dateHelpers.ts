@@ -141,20 +141,53 @@ export function getLocalDateString(date: Date): string {
 
 /**
  * Parsea una fecha ISO string interpretándola como fecha local
- * Extrae la fecha y hora del ISO string y crea una fecha local
- * @param isoString - String ISO (ej: "2026-01-05T10:00:00.000Z" o "2026-01-05T10:00:00Z")
- * @returns Date en hora local con la fecha/hora extraída del ISO string
+ * Si viene con 'Z' (UTC), extrae los componentes UTC y crea un Date local con esos componentes
+ * Esto asegura que se guarde la hora correcta independientemente de la zona horaria del servidor
+ * @param isoString - String ISO (ej: "2026-01-05T08:00:00.000Z" que representa 09:00 hora local)
+ * @returns Date object con la hora local correcta
  */
 export function parseISODateAsLocal(isoString: string): Date {
-  // Extraer fecha y hora del ISO string (formato: YYYY-MM-DDTHH:mm:ss.sssZ o YYYY-MM-DDTHH:mm:ssZ)
-  const match = isoString.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z?$/);
+  // Si el string tiene 'Z', es UTC - extraer componentes UTC y crear Date local
+  if (isoString.endsWith('Z')) {
+    const match = isoString.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/);
+    if (match) {
+      const [, year, month, day, hour, minute, second, millisecond] = match;
+      // Crear Date UTC primero
+      const utcDate = new Date(Date.UTC(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        parseInt(hour),
+        parseInt(minute),
+        parseInt(second),
+        millisecond ? parseInt(millisecond.padEnd(3, '0')) : 0
+      ));
+      // Extraer componentes locales del Date UTC convertido
+      return new Date(
+        utcDate.getFullYear(),
+        utcDate.getMonth(),
+        utcDate.getDate(),
+        utcDate.getHours(),
+        utcDate.getMinutes(),
+        utcDate.getSeconds(),
+        utcDate.getMilliseconds()
+      );
+    }
+  }
+  
+  // Si tiene timezone offset, usar new Date() que lo maneja automáticamente
+  if (/[+-]\d{2}:\d{2}$/.test(isoString)) {
+    return new Date(isoString);
+  }
+  
+  // Si no tiene 'Z' ni offset, interpretar como hora local directamente
+  const match = isoString.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
   if (!match) {
-    // Si no coincide el formato, intentar parsear normalmente
     return new Date(isoString);
   }
   
   const [, year, month, day, hour, minute, second, millisecond] = match;
-  // Crear fecha local directamente (sin conversión UTC)
+  // Crear fecha local directamente
   return new Date(
     parseInt(year),
     parseInt(month) - 1,
@@ -164,5 +197,29 @@ export function parseISODateAsLocal(isoString: string): Date {
     parseInt(second),
     millisecond ? parseInt(millisecond.padEnd(3, '0')) : 0
   );
+}
+
+/**
+ * Formatea una fecha como ISO string local (sin Z, sin conversión UTC)
+ * Usa el mismo método que los slots: usar getHours() directamente del Date object
+ * Cuando Prisma devuelve un Date, JavaScript ya convierte el timestamp UTC a hora local
+ * @param date - Fecha a formatear (viene de Prisma como Date object)
+ * @returns String ISO en formato local (ej: "2026-01-05T10:00:00.000")
+ */
+export function formatDateAsLocalISO(date: Date): string {
+  // Usar el mismo método que los slots: getHours() directamente del Date object
+  // JavaScript convierte automáticamente el timestamp UTC de Prisma a hora local del sistema
+  const localDate = date instanceof Date ? date : new Date(date);
+  
+  // Extraer componentes locales directamente (igual que los slots hacen con getHours())
+  const year = localDate.getFullYear();
+  const month = String(localDate.getMonth() + 1).padStart(2, '0');
+  const day = String(localDate.getDate()).padStart(2, '0');
+  const hours = String(localDate.getHours()).padStart(2, '0');
+  const minutes = String(localDate.getMinutes()).padStart(2, '0');
+  const seconds = String(localDate.getSeconds()).padStart(2, '0');
+  const milliseconds = String(localDate.getMilliseconds()).padStart(3, '0');
+  
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}`;
 }
 

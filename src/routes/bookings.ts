@@ -782,6 +782,7 @@ router.get("/getBirthdayBookings", authenticateUser, async (req: any, res) => {
         const whereClause: any = {};
         
         // Filtrar por rango de fechas si se proporciona
+        // Si no se proporciona, usar rango por defecto: 12 meses atrás y 12 meses adelante
         if (startDate && endDate) {
             const { start: startOfRange } = getDateRange(startDate as string);
             const endOfRange = getEndOfDay(parseDateString(endDate as string));
@@ -810,11 +811,47 @@ router.get("/getBirthdayBookings", authenticateUser, async (req: any, res) => {
                     ]
                 }
             ];
+        } else {
+            // Rango por defecto: 12 meses atrás y 12 meses adelante
+            const { getStartOfDay } = await import("../utils/dateHelpers");
+            const today = getStartOfDay();
+            const twelveMonthsAgo = new Date(today);
+            twelveMonthsAgo.setMonth(today.getMonth() - 12);
+            const twelveMonthsAhead = new Date(today);
+            twelveMonthsAhead.setMonth(today.getMonth() + 12);
+            
+            // BirthdayBooking puede tener slot opcional (slotId Int?)
+            whereClause.OR = [
+                // Reservas con slot en el rango
+                {
+                    slot: {
+                        startTime: {
+                            gte: twelveMonthsAgo,
+                            lte: twelveMonthsAhead,
+                        }
+                    }
+                },
+                // Reservas sin slot pero con createdAt en el rango
+                {
+                    AND: [
+                        { slotId: null },
+                        {
+                            createdAt: {
+                                gte: twelveMonthsAgo,
+                                lte: twelveMonthsAhead,
+                            }
+                        }
+                    ]
+                }
+            ];
         }
         
         const birthdayBookings = await prisma.birthdayBooking.findMany({
             where: Object.keys(whereClause).length > 0 ? whereClause : undefined,
-            include: { slot: true }
+            include: { slot: true },
+            orderBy: [
+                { createdAt: "asc" }
+            ]
         });
         res.json(birthdayBookings);
     } catch (err) {

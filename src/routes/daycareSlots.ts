@@ -253,13 +253,16 @@ router.put("/daycare-slots/:id", authenticateUser, async (req: any, res) => {
     });
 
     // Formatear las horas a "HH:mm" para el frontend
+    const openHourDate = updatedSlot.openHour;
+    const closeHourDate = updatedSlot.closeHour;
+    
     const formattedSlot = {
       ...updatedSlot,
-      openHour: updatedSlot.openHour ? 
-        `${updatedSlot.openHour.getHours().toString().padStart(2, '0')}:${updatedSlot.openHour.getMinutes().toString().padStart(2, '0')}` : 
+      openHour: openHourDate ? 
+        `${openHourDate.getHours().toString().padStart(2, '0')}:${openHourDate.getMinutes().toString().padStart(2, '0')}` : 
         null,
-      closeHour: updatedSlot.closeHour ? 
-        `${updatedSlot.closeHour.getHours().toString().padStart(2, '0')}:${updatedSlot.closeHour.getMinutes().toString().padStart(2, '0')}` : 
+      closeHour: closeHourDate ? 
+        `${closeHourDate.getHours().toString().padStart(2, '0')}:${closeHourDate.getMinutes().toString().padStart(2, '0')}` : 
         null,
     };
 
@@ -404,17 +407,21 @@ router.get("/available/date/:date", async (req, res) => {
       },
     });
 
-    const formatted = availableSlots.map((slot) => ({
-      id: slot.id,
-      date: date, // agregar la fecha
-      hour: slot.hour,
-      openHour: `${new Date(slot.openHour).getHours().toString().padStart(2, '0')}:${new Date(slot.openHour).getMinutes().toString().padStart(2, '0')}`,
-      closeHour: `${new Date(slot.closeHour).getHours().toString().padStart(2, '0')}:${new Date(slot.closeHour).getMinutes().toString().padStart(2, '0')}`,
-      availableSpots: slot.availableSpots,
-      capacity: slot.capacity,
-      status: slot.status,
-      label: `${new Date(slot.openHour).getHours()}:00 - ${new Date(slot.closeHour).getHours()}:00`,
-    }));
+    const formatted = availableSlots.map((slot) => {
+      const openHourDate = slot.openHour;
+      const closeHourDate = slot.closeHour;
+      return {
+        id: slot.id,
+        date: date, // agregar la fecha
+        hour: slot.hour,
+        openHour: `${openHourDate.getHours().toString().padStart(2, '0')}:${openHourDate.getMinutes().toString().padStart(2, '0')}`,
+        closeHour: `${closeHourDate.getHours().toString().padStart(2, '0')}:${closeHourDate.getMinutes().toString().padStart(2, '0')}`,
+        availableSpots: slot.availableSpots,
+        capacity: slot.capacity,
+        status: slot.status,
+        label: `${openHourDate.getHours()}:00 - ${closeHourDate.getHours()}:00`,
+      };
+    });
 
 
     // Si no hay resultados
@@ -445,6 +452,7 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
     const andConditions: any[] = [];
     
     // Filtrar por rango de fechas si se proporciona
+    // Si no se proporciona, usar rango por defecto: 12 meses atrás y 12 meses adelante
     if (startDate && endDate) {
       const { start: startOfRange } = getDateRange(startDate as string);
       const endOfRange = getEndOfDay(parseDateString(endDate as string));
@@ -453,6 +461,20 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
         date: {
           gte: startOfRange,
           lte: endOfRange,
+        }
+      });
+    } else {
+      // Rango por defecto: 12 meses atrás y 12 meses adelante
+      const today = getStartOfDay();
+      const twelveMonthsAgo = new Date(today);
+      twelveMonthsAgo.setMonth(today.getMonth() - 12);
+      const twelveMonthsAhead = new Date(today);
+      twelveMonthsAhead.setMonth(today.getMonth() + 12);
+      
+      andConditions.push({
+        date: {
+          gte: twelveMonthsAgo,
+          lte: twelveMonthsAhead,
         }
       });
     }
@@ -494,10 +516,10 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
     const slots = await prisma.daycareSlot.findMany({
       where: whereClause,
       include: { bookings: true },
-      orderBy: startDate && endDate ? [
+      orderBy: [
         { date: "asc" },
         { openHour: "asc" }
-      ] : undefined,
+      ],
     });
 
     // Formatear las horas a "HH:mm" y agregar fecha formateada si es necesario
@@ -505,11 +527,14 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
       const slotDate = new Date(slot.date);
       const dateStr = `${slotDate.getFullYear()}-${(slotDate.getMonth() + 1).toString().padStart(2, '0')}-${slotDate.getDate().toString().padStart(2, '0')}`;
       
+      const openHourDate = slot.openHour;
+      const closeHourDate = slot.closeHour;
+      
       return {
         ...slot,
         date: dateStr, // Agregar fecha formateada
-        openHour: `${new Date(slot.openHour).getHours().toString().padStart(2, '0')}:${new Date(slot.openHour).getMinutes().toString().padStart(2, '0')}`,
-        closeHour: `${new Date(slot.closeHour).getHours().toString().padStart(2, '0')}:${new Date(slot.closeHour).getMinutes().toString().padStart(2, '0')}`,
+        openHour: `${openHourDate.getHours().toString().padStart(2, '0')}:${openHourDate.getMinutes().toString().padStart(2, '0')}`,
+        closeHour: `${closeHourDate.getHours().toString().padStart(2, '0')}:${closeHourDate.getMinutes().toString().padStart(2, '0')}`,
       };
     });
 
