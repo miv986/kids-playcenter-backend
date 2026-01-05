@@ -9,18 +9,16 @@ import { getDaycareBookingConfirmedEmail, getDaycareBookingStatusChangedEmail } 
 import prisma from "../utils/prisma";
 import { executeWithRetry } from "../utils/transactionRetry";
 import { getStartOfDay, getEndOfDay, getDateRange, isToday, isPastDateTime, getLocalDateString, getLocalHour, parseDateString } from "../utils/dateHelpers";
-
-// Helper para formatear fechas igual que los slots
-function formatAsLocalISO(date: Date): string {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-    const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
-    return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${milliseconds}`;
-}
+// ✅ NUEVO: Importar funciones de timezone unificado
+import { 
+    formatForAPI, 
+    parseToMadridDate, 
+    isPastMadrid, 
+    isTodayMadrid, 
+    getStartOfDayMadrid, 
+    getHourMadrid,
+    formatDateOnlyMadrid 
+} from "../utils/timezone";
 
 const router = express.Router();
 
@@ -47,8 +45,9 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             return res.status(400).json({ error: "Debes proporcionar fecha y hora de inicio y fin." });
         }
 
-        const start = new Date(startTime);
-        const end = new Date(endTime);
+        // ✅ Parsear fechas usando timezone unificado (Europe/Madrid)
+        const start = parseToMadridDate(startTime);
+        const end = parseToMadridDate(endTime);
 
         // ✅ Validar que las fechas sean válidas
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
@@ -60,19 +59,19 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             return res.status(400).json({ error: "La hora de inicio debe ser anterior a la hora de fin." });
         }
 
-        // Extraer la fecha local correctamente usando utilidades
-        const dateString = getLocalDateString(start);
+        // Extraer la fecha usando timezone de Madrid
+        const dateString = formatDateOnlyMadrid(start);
         const { start: startOfDay, end: endOfDay } = getDateRange(dateString);
-        const date = getStartOfDay(start);
+        const date = getStartOfDayMadrid(start);
         
         if (req.user.role !== 'ADMIN') {
-            const now = getStartOfDay();
+            const now = getStartOfDayMadrid();
             
             if (date < now) {
                 return res.status(400).json({ error: "No se pueden reservar slots con fechas pasadas." });
             }
             // Validar también que la hora de inicio no sea pasada si es hoy
-            if (isToday(start) && isPastDateTime(start)) {
+            if (isTodayMadrid(start) && isPastMadrid(start)) {
                 return res.status(400).json({ error: "No se pueden reservar slots con horarios pasados." });
             }
 
@@ -117,8 +116,8 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             expectedSlotsCount = timeDiffHours;
         } else {
             // Calcular desde startTime y endTime usando utilidades para consistencia
-            startHour = getLocalHour(start);
-            endHour = getLocalHour(end);
+            startHour = getHourMadrid(start);
+            endHour = getHourMadrid(end);
             expectedSlotsCount = endHour - startHour;
         }
 
@@ -265,8 +264,8 @@ router.post("/", authenticateUser, validateDTO(CreateDaycareBookingDTO), async (
             message: "✅ Reserva creada correctamente.",
             booking: {
                 ...booking,
-                startTime: formatAsLocalISO(booking.startTime),
-                endTime: formatAsLocalISO(booking.endTime),
+                startTime: formatForAPI(booking.startTime),
+                endTime: formatForAPI(booking.endTime),
             },
         });
     } catch (err: any) {
@@ -352,8 +351,8 @@ router.post("/manual", authenticateUser, validateDTO(CreateManualDaycareBookingD
             endHour = startHour + timeDiffHours;
             expectedSlotsCount = timeDiffHours;
         } else {
-            startHour = getLocalHour(start);
-            endHour = getLocalHour(end);
+            startHour = getHourMadrid(start);
+            endHour = getHourMadrid(end);
             expectedSlotsCount = endHour - startHour;
         }
 
@@ -468,8 +467,8 @@ router.post("/manual", authenticateUser, validateDTO(CreateManualDaycareBookingD
             message: "✅ Reserva manual creada correctamente.",
             booking: {
                 ...booking,
-                startTime: formatAsLocalISO(booking.startTime),
-                endTime: formatAsLocalISO(booking.endTime),
+                startTime: formatForAPI(booking.startTime),
+                endTime: formatForAPI(booking.endTime),
             },
         });
     } catch (err: any) {
@@ -546,12 +545,14 @@ router.get("/", authenticateUser, async (req: any, res) => {
             ],
         });
 
-        // Formatear fechas igual que los slots: extraer hora con getHours()
+        // ✅ Formatear fechas usando timezone unificado (Europe/Madrid)
         const formattedBookings = bookings.map(booking => {
             return {
                 ...booking,
-                startTime: formatAsLocalISO(booking.startTime),
-                endTime: formatAsLocalISO(booking.endTime),
+                startTime: formatForAPI(booking.startTime),
+                endTime: formatForAPI(booking.endTime),
+                createdAt: formatForAPI(booking.createdAt),
+                updatedAt: formatForAPI(booking.updatedAt),
             };
         });
 
@@ -680,8 +681,8 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             expectedSlotsCount = timeDiffHours;
         } else {
             // Calcular desde startTime y endTime usando utilidades para consistencia
-            startHour = getLocalHour(start);
-            endHour = getLocalHour(end);
+            startHour = getHourMadrid(start);
+            endHour = getHourMadrid(end);
             expectedSlotsCount = endHour - startHour;
         }
         
@@ -900,8 +901,10 @@ router.put("/:id", authenticateUser, validateDTO(UpdateDaycareBookingDTO), async
             message: "✅ Reserva modificada correctamente.",
             booking: {
                 ...bookingToReturn,
-                startTime: formatAsLocalISO(bookingToReturn.startTime),
-                endTime: formatAsLocalISO(bookingToReturn.endTime),
+                startTime: formatForAPI(bookingToReturn.startTime),
+                endTime: formatForAPI(bookingToReturn.endTime),
+                createdAt: formatForAPI(bookingToReturn.createdAt),
+                updatedAt: formatForAPI(bookingToReturn.updatedAt),
             },
         });
     } catch (err: any) {
@@ -1095,13 +1098,15 @@ router.put("/:id/attendance", authenticateUser, async (req: any, res: any) => {
             include: { user: { include: { children: true } }, slots: true, children: true },
         });
 
-        // Formatear fechas para evitar problemas de timezone
+        // ✅ Formatear fechas usando timezone unificado
         return res.json({
             message: `✅ Asistencia marcada como ${attendanceStatus === 'ATTENDED' ? 'asistió' : attendanceStatus === 'NOT_ATTENDED' ? 'no asistió' : 'pendiente'}.`,
             booking: {
                 ...updatedBooking,
-                startTime: formatAsLocalISO(updatedBooking.startTime),
-                endTime: formatAsLocalISO(updatedBooking.endTime),
+                startTime: formatForAPI(updatedBooking.startTime),
+                endTime: formatForAPI(updatedBooking.endTime),
+                createdAt: formatForAPI(updatedBooking.createdAt),
+                updatedAt: formatForAPI(updatedBooking.updatedAt),
             },
         });
     } catch (err: any) {

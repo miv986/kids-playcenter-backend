@@ -11,8 +11,8 @@ model RefreshToken {
   id        Int      @id @default(autoincrement())
   token     String   @unique
   userId    Int
-  createdAt DateTime @default(now())
-  expiresAt DateTime
+  createdAt DateTime @default(now()) @db.Timestamptz
+  expiresAt DateTime @db.Timestamptz
   user      User     @relation(fields: [userId], references: [id])
 }
 
@@ -24,14 +24,14 @@ model User {
   phone_number             String?
   role                     Role             @default(USER)
   password                 String?
-  createdAt                DateTime         @default(now())
-  updatedAt                DateTime         @updatedAt
+  createdAt                DateTime         @default(now()) @db.Timestamptz
+  updatedAt                DateTime         @updatedAt @db.Timestamptz
   emailVerifyToken         String?
   isEmailVerified          Boolean          @default(false)
   passwordResetToken       String?
-  passwordResetExpires     DateTime?
+  passwordResetExpires     DateTime?        @db.Timestamptz
   allergies                String?
-  dateOfBirth              DateTime?
+  dateOfBirth              DateTime?        @db.Timestamptz
   emergency_contact_name_1 String?
   emergency_contact_name_2 String?
   medicalNotes             String?
@@ -52,10 +52,10 @@ model DaycareBooking {
   id               Int              @id @default(autoincrement())
   comments         String?
   status           Status           @default(PENDING)
-  startTime        DateTime
-  endTime          DateTime
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  startTime        DateTime         @db.Timestamptz
+  endTime          DateTime         @db.Timestamptz
+  createdAt        DateTime         @default(now()) @db.Timestamptz
+  updatedAt        DateTime         @updatedAt @db.Timestamptz
   userId           Int?
   attendanceStatus AttendanceStatus @default(PENDING)
   user             User?            @relation(fields: [userId], references: [id])
@@ -81,15 +81,15 @@ model DaycareBooking {
 
 model DaycareSlot {
   id             Int              @id @default(autoincrement())
-  date           DateTime
+  date           DateTime         @db.Timestamptz
   capacity       Int
   availableSpots Int
   status         Status           @default(OPEN)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime         @default(now()) @db.Timestamptz
+  updatedAt      DateTime         @updatedAt @db.Timestamptz
   hour           Int
-  closeHour      DateTime
-  openHour       DateTime
+  closeHour      DateTime         @db.Timestamptz
+  openHour       DateTime         @db.Timestamptz
   bookings       DaycareBooking[] @relation("DaycareSlotBookings")
 
   @@index([date, hour])
@@ -107,15 +107,15 @@ model BirthdayBooking {
   packageType    Package?
   status         Status        @default(PENDING)
   slotId         Int?          @unique
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime      @default(now()) @db.Timestamptz
+  updatedAt      DateTime      @updatedAt @db.Timestamptz
   guestEmail     String
   slot           BirthdaySlot? @relation(fields: [slotId], references: [id], onDelete: Cascade)
 
   // Campos para guardar la fecha original del slot cuando se cancela (histórico)
-  originalSlotDate      DateTime?
-  originalSlotStartTime DateTime?
-  originalSlotEndTime   DateTime?
+  originalSlotDate      DateTime? @db.Timestamptz
+  originalSlotStartTime DateTime? @db.Timestamptz
+  originalSlotEndTime   DateTime? @db.Timestamptz
 
   @@index([status])
   @@index([guestEmail])
@@ -124,12 +124,12 @@ model BirthdayBooking {
 
 model BirthdaySlot {
   id        Int              @id @default(autoincrement())
-  date      DateTime
-  startTime DateTime
-  endTime   DateTime
+  date      DateTime         @db.Timestamptz
+  startTime DateTime         @db.Timestamptz
+  endTime   DateTime         @db.Timestamptz
   status    Status           @default(CLOSED)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  createdAt DateTime         @default(now()) @db.Timestamptz
+  updatedAt DateTime         @updatedAt @db.Timestamptz
   booking   BirthdayBooking?
 
   @@index([date])
@@ -139,14 +139,14 @@ model BirthdaySlot {
 
 model MeetingSlot {
   id             Int              @id @default(autoincrement())
-  date           DateTime
-  startTime      DateTime
-  endTime        DateTime
+  date           DateTime         @db.Timestamptz
+  startTime      DateTime         @db.Timestamptz
+  endTime        DateTime         @db.Timestamptz
   capacity       Int
   availableSpots Int
   status         Status           @default(OPEN)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime         @default(now()) @db.Timestamptz
+  updatedAt      DateTime         @updatedAt @db.Timestamptz
   bookings       MeetingBooking[]
 
   @@index([date])
@@ -162,8 +162,8 @@ model MeetingBooking {
   comments  String?
   status    Status       @default(PENDING)
   slotId    Int
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime     @default(now()) @db.Timestamptz
+  updatedAt DateTime     @updatedAt @db.Timestamptz
   slot      MeetingSlot  @relation(fields: [slotId], references: [id], onDelete: Cascade)
 
   @@index([status])
@@ -185,8 +185,8 @@ model BirthdayPackage {
   isPopular      Boolean  @default(false)
   isActive       Boolean  @default(true)
   showBookButton Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now()) @db.Timestamptz
+  updatedAt      DateTime @updatedAt @db.Timestamptz
   featuresEs     String[]
   featuresVa     String[] 
   perChildTextEs String?
@@ -199,10 +199,10 @@ model ChildNote {
   adminId   Int
   content   String
   images    String[]
-  noteDate  DateTime @default(now())
+  noteDate  DateTime @default(now()) @db.Timestamptz
   isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
   admin     User     @relation("AdminNotes", fields: [adminId], references: [id])
   child     User     @relation("ChildNotes", fields: [childId], references: [id], onDelete: Cascade)
 }
