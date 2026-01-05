@@ -2,6 +2,8 @@ import express from "express";
 import { authenticateUser, optionalAuthenticate } from "../middleware/auth";
 import prisma from "../utils/prisma";
 import { parseDateString, getStartOfDay, getEndOfDay } from "../utils/dateHelpers";
+// ✅ NUEVO: Importar funciones de timezone unificado
+import { formatForAPI } from "../utils/timezone";
 
 const router = express.Router();
 
@@ -69,27 +71,28 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
       
       for (let hour = openH; hour < closeH; hour++) {
         try {
-          // Verificar si ya existe un slot para esta fecha y hora usando utilidades
+          const openDate = new Date(date);
+          openDate.setHours(hour, openM, 0, 0);
+
+          const closeDate = new Date(date);
+          closeDate.setHours(hour + 1, closeM, 0, 0);
+
+          // ✅ Verificar duplicados: misma fecha, misma openHour y closeHour
           const existingSlot = await prisma.daycareSlot.findFirst({
             where: {
               date: {
                 gte: date,
                 lte: endOfDay
               },
-              hour: hour,
+              openHour: openDate,
+              closeHour: closeDate,
             },
           });
 
           if (existingSlot) {
-            errors.push(`Slot ya existe para ${date.toDateString()} a las ${hour}:00`);
+            errors.push(`Slot ya existe para ${date.toDateString()} de ${hour}:${openM.toString().padStart(2, '0')} a ${hour + 1}:${closeM.toString().padStart(2, '0')}`);
             continue;
           }
-
-          const openDate = new Date(date);
-          openDate.setHours(hour, 0, 0, 0);
-
-          const closeDate = new Date(date);
-          closeDate.setHours(hour + 1, 0, 0, 0);
 
           const newSlot = await prisma.daycareSlot.create({
             data: {
@@ -105,8 +108,8 @@ router.post("/generate-daycare-slots", authenticateUser, async (req: any, res) =
 
           createdSlots.push(newSlot);
         } catch (error) {
-          console.error(`Error creando slot para ${date.toDateString()} ${hour}:00:`, error);
-          errors.push(`Error creando slot para ${date.toDateString()} ${hour}:00`);
+          console.error(`Error creando slot para ${date.toDateString()} ${hour}:${openM.toString().padStart(2, '0')}:`, error);
+          errors.push(`Error creando slot para ${date.toDateString()} ${hour}:${openM.toString().padStart(2, '0')}`);
         }
       }
     };
@@ -522,19 +525,18 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
       ],
     });
 
-    // Formatear las horas a "HH:mm" y agregar fecha formateada si es necesario
+    // ✅ Formatear usando timezone unificado (Europe/Madrid)
     const formattedSlots = slots.map(slot => {
-      const slotDate = new Date(slot.date);
-      const dateStr = `${slotDate.getFullYear()}-${(slotDate.getMonth() + 1).toString().padStart(2, '0')}-${slotDate.getDate().toString().padStart(2, '0')}`;
-      
       const openHourDate = slot.openHour;
       const closeHourDate = slot.closeHour;
       
       return {
         ...slot,
-        date: dateStr, // Agregar fecha formateada
+        date: formatForAPI(slot.date),
         openHour: `${openHourDate.getHours().toString().padStart(2, '0')}:${openHourDate.getMinutes().toString().padStart(2, '0')}`,
         closeHour: `${closeHourDate.getHours().toString().padStart(2, '0')}:${closeHourDate.getMinutes().toString().padStart(2, '0')}`,
+        createdAt: formatForAPI(slot.createdAt),
+        updatedAt: formatForAPI(slot.updatedAt),
       };
     });
 

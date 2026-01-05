@@ -4,6 +4,8 @@ import { getFutureSlotsFilter } from "../utils/slotFilters";
 import { getDateRange, validateNotPastDate, validateNotPastTodayDateTime, getStartOfDay, getEndOfDay, parseDateString } from "../utils/dateHelpers";
 import { validateMeetingSlotConflict } from "../utils/validateSlot";
 import prisma from "../utils/prisma";
+// ✅ NUEVO: Importar funciones de timezone unificado
+import { formatForAPI } from "../utils/timezone";
 
 const router = express.Router();
 
@@ -139,7 +141,23 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
                 { startTime: "asc" }
             ]
         });
-        res.json(slots);
+        
+        // ✅ Formatear usando timezone unificado (Europe/Madrid)
+        const formattedSlots = slots.map(slot => ({
+            ...slot,
+            date: formatForAPI(slot.date),
+            startTime: formatForAPI(slot.startTime),
+            endTime: formatForAPI(slot.endTime),
+            createdAt: formatForAPI(slot.createdAt),
+            updatedAt: formatForAPI(slot.updatedAt),
+            bookings: slot.bookings.map(booking => ({
+                ...booking,
+                createdAt: formatForAPI(booking.createdAt),
+                updatedAt: formatForAPI(booking.updatedAt),
+            })),
+        }));
+        
+        res.json(formattedSlots);
     } catch (err) {
         console.error("Error listando slots:", err);
         res.status(500).json({ error: "Internal server error" });
@@ -177,7 +195,23 @@ router.get("/availableSlots", async (req: any, res) => {
                 { startTime: "asc" }
             ]
         });
-        res.json(slots);
+        
+        // ✅ Formatear usando timezone unificado (Europe/Madrid)
+        const formattedSlots = slots.map(slot => ({
+            ...slot,
+            date: formatForAPI(slot.date),
+            startTime: formatForAPI(slot.startTime),
+            endTime: formatForAPI(slot.endTime),
+            createdAt: formatForAPI(slot.createdAt),
+            updatedAt: formatForAPI(slot.updatedAt),
+            bookings: slot.bookings.map(booking => ({
+                ...booking,
+                createdAt: formatForAPI(booking.createdAt),
+                updatedAt: formatForAPI(booking.updatedAt),
+            })),
+        }));
+        
+        res.json(formattedSlots);
     } catch (err) {
         console.error("Error listando slots disponibles:", err);
         res.status(500).json({ error: "Internal server error" });

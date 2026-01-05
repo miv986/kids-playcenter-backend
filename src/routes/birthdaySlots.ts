@@ -5,6 +5,8 @@ import { validateSlotConflict } from "../utils/validateSlot";
 import { getFutureSlotsFilter } from "../utils/slotFilters";
 import prisma from "../utils/prisma";
 import { getDateRange, getEndOfDay, parseDateString } from "../utils/dateHelpers";
+// ✅ NUEVO: Importar funciones de timezone unificado
+import { formatForAPI } from "../utils/timezone";
 
 const router = express.Router();
 
@@ -125,7 +127,23 @@ router.get("/", optionalAuthenticate, async (req: any, res) => {
                 { startTime: "asc" }
             ]
         });
-        res.json(slots);
+        
+        // ✅ Formatear usando timezone unificado (Europe/Madrid)
+        const formattedSlots = slots.map(slot => ({
+            ...slot,
+            date: formatForAPI(slot.date),
+            startTime: formatForAPI(slot.startTime),
+            endTime: formatForAPI(slot.endTime),
+            createdAt: formatForAPI(slot.createdAt),
+            updatedAt: formatForAPI(slot.updatedAt),
+            booking: slot.booking ? {
+                ...slot.booking,
+                createdAt: formatForAPI(slot.booking.createdAt),
+                updatedAt: formatForAPI(slot.booking.updatedAt),
+            } : null,
+        }));
+        
+        res.json(formattedSlots);
     } catch (err) {
         console.error("Error listando slots:", err);
         res.status(500).json({ error: "Internal server error" });
