@@ -30,7 +30,8 @@ export async function initializeScheduledJobs() {
 
     // Verificar que Prisma está conectado
     if (!isPrismaConnected()) {
-        throw new Error("No se pueden inicializar cron jobs sin conexión a la base de datos");
+        console.warn('⚠️ Cron jobs no iniciados: Prisma no conectado');
+        return;
     }
 
     // Ejecutar cada hora para cerrar reservas pasadas
@@ -47,7 +48,7 @@ export async function initializeScheduledJobs() {
 
     console.log("✅ Trabajos programados inicializados:");
     console.log("   - Cierre automático de reservas: Cada hora (Europe/Madrid)");
-    
+
     // Ejecutar inmediatamente al iniciar para cerrar reservas ya caducadas
     // Pero esperar un poco para asegurar que todo está estable
     setTimeout(async () => {

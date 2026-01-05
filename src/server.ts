@@ -29,7 +29,7 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 app.get('/health', async (req, res) => {
   try {
     const { isPrismaConnected, getPrisma } = await import('./utils/prisma');
-    
+
     if (!isPrismaConnected()) {
       return res.status(503).json({
         status: 'unhealthy',
@@ -79,7 +79,25 @@ app.get('/', (req, res) => {
 
 // Manejo de errores global
 app.use((err: any, req: any, res: any, next: any) => {
-  console.error(err);
+  console.error('Error capturado:', err);
+  
+  // Errores de conexión de base de datos
+  if (err.message && (
+    err.message.includes('Database not available') ||
+    err.message.includes('Database not initialized') ||
+    err.message.includes('connection') ||
+    err.code === 'P1001' || // Can't reach database server
+    err.code === 'P1008' || // Operations timed out
+    err.code === 'P1017' || // Server has closed the connection
+    err.code === 'P1030'    // Database server error
+  )) {
+    return res.status(503).json({
+      error: 'Database temporarily unavailable',
+      message: 'The database is not available right now. Please try again in a moment.',
+      retryAfter: 5
+    });
+  }
+  
   res.status(err.status || 500).json({
     error: 'Something went wrong!',
     message: err.message
@@ -91,7 +109,7 @@ app.use((err: any, req: any, res: any, next: any) => {
  */
 async function registerRoutes() {
   console.log('📋 Registrando rutas...');
-  
+
   const apiRoutes = (await import('./routes/api')).default;
   const authRoutes = (await import('./routes/auth')).default;
   const apiBookings = (await import('./routes/bookings')).default;
@@ -111,14 +129,14 @@ async function registerRoutes() {
   app.use('/api/meetingSlots', apiMeetingSlots);
   app.use('/api/meetingBookings', apiMeetingBookings);
   app.use('/api/packages', apiPackages);
-  
+
   // Manejo de rutas no encontradas - DEBE ir DESPUÉS de todas las rutas
   app.use((req, res) => {
     res.status(404).json({
       error: 'Route not found'
     });
   });
-  
+
   console.log('✅ Rutas registradas correctamente');
 }
 
@@ -132,14 +150,7 @@ export async function startServer() {
   // Verificar que Prisma esté conectado
   const { isPrismaConnected } = await import('./utils/prisma');
   if (!isPrismaConnected()) {
-    console.warn('⚠️ ADVERTENCIA: Prisma no está conectado. Intentando conectar...');
-    const { initializePrisma } = await import('./utils/prisma');
-    try {
-      await initializePrisma(10, 2000);
-    } catch (error) {
-      console.error('❌ No se pudo conectar a la base de datos. El servidor no puede arrancar.');
-      throw error;
-    }
+    console.warn('⚠️ Prisma aún no conectado, el servidor arranca igual');
   }
 
   // Registrar rutas DESPUÉS de verificar Prisma
@@ -158,7 +169,7 @@ export async function startServer() {
         console.error('⚠️ Error inicializando trabajos programados:', error);
         // No matamos el servidor por esto
       }
-      
+
       resolve();
     });
   });
@@ -168,10 +179,10 @@ export async function startServer() {
 if (require.main === module) {
   (async () => {
     console.log('⚠️ Iniciando en modo directo (desarrollo). Para producción, usa start-server.ts');
-    
+
     const { initializePrisma } = await import('./utils/prisma');
     await initializePrisma(20, 3000);
-    
+
     await startServer();
   })().catch((error) => {
     console.error('❌ Error fatal al iniciar servidor:', error);
@@ -180,3 +191,16 @@ if (require.main === module) {
 }
 
 export default app;
+
+import { isPrismaConnected, getPrisma } from './utils/prisma';
+import { initializeScheduledJobs } from './jobs/bookingScheduler';
+
+
+setInterval(() => {
+  if (isPrismaConnected()) {
+    console.log('⏰ Prisma conectado, asegurando cron jobs activos');
+    initializeScheduledJobs().catch((err) => {
+      console.error('⚠️ Error re-inicializando cron jobs:', err.message);
+    });
+  }
+}, 30000); // cada 30s

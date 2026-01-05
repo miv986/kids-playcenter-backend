@@ -1,6 +1,8 @@
 // start-server.ts
 import { execSync } from 'child_process';
 import { initializePrisma, disconnectPrisma } from '../utils/prisma';
+console.log('DATABASE_URL AT START:', process.env.DATABASE_URL);
+
 
 /**
  * Ejecuta migraciones con reintentos
@@ -36,15 +38,12 @@ async function runMigrations(maxRetries = 5, delay = 5000): Promise<boolean> {
 async function start() {
   console.log('🚀 Iniciando servidor Kids Playcenter...');
 
-  // 1. Conectar a la base de datos con reintentos
-  console.log('🔌 Conectando a la base de datos...');
-  try {
-    await initializePrisma(20, 3000); // 20 reintentos, 3 segundos entre cada uno
-  } catch (error: any) {
-    console.error('❌ No se pudo conectar a la base de datos:', error.message);
-    console.error('💡 Verifica que PostgreSQL esté corriendo y que DATABASE_URL sea correcta');
-    process.exit(1);
-  }
+  // 1. Iniciar conexión a la DB en background (NO bloquear arranque)
+  console.log('🔌 Iniciando conexión a la base de datos (background)...');
+
+  initializePrisma(100, 5000).catch((error: any) => {
+    console.error('🚨 Prisma sigue intentando conectar en background:', error.message);
+  });
 
   // 2. Ejecutar migraciones
   const migrationsSuccess = await runMigrations();
@@ -56,7 +55,7 @@ async function start() {
   // 3. Importar y arrancar el servidor (que ya tiene su propia lógica de startup)
   console.log('🚀 Arrancando servidor HTTP...');
   const { startServer } = await import('../server');
-  
+
   // startServer() ya maneja:
   // - Registro de rutas
   // - Inicio de cron jobs
