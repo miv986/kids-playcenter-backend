@@ -7,6 +7,8 @@ import { getBirthdayBookingCreatedEmail, getBirthdayBookingConfirmedEmail, getBi
 import prisma from "../utils/prisma";
 import { executeWithRetry } from "../utils/transactionRetry";
 import { getDateRange, getEndOfDay, parseDateString } from "../utils/dateHelpers";
+// ✅ NUEVO: Importar funciones de timezone unificado
+import { formatForAPI } from "../utils/timezone";
 const router = express.Router();
 
 //
@@ -853,7 +855,26 @@ router.get("/getBirthdayBookings", authenticateUser, async (req: any, res) => {
                 { createdAt: "asc" }
             ]
         });
-        res.json(birthdayBookings);
+        
+        // ✅ Formatear fechas usando timezone unificado
+        const formattedBookings = birthdayBookings.map(booking => ({
+            ...booking,
+            createdAt: formatForAPI(booking.createdAt),
+            updatedAt: formatForAPI(booking.updatedAt),
+            originalSlotDate: booking.originalSlotDate ? formatForAPI(booking.originalSlotDate) : null,
+            originalSlotStartTime: booking.originalSlotStartTime ? formatForAPI(booking.originalSlotStartTime) : null,
+            originalSlotEndTime: booking.originalSlotEndTime ? formatForAPI(booking.originalSlotEndTime) : null,
+            slot: booking.slot ? {
+                ...booking.slot,
+                date: formatForAPI(booking.slot.date),
+                startTime: formatForAPI(booking.slot.startTime),
+                endTime: formatForAPI(booking.slot.endTime),
+                createdAt: formatForAPI(booking.slot.createdAt),
+                updatedAt: formatForAPI(booking.slot.updatedAt),
+            } : null,
+        }));
+        
+        res.json(formattedBookings);
     } catch (err) {
         console.error("Error en GET /bookings/getBirthdayBookings:", err);
         res.status(500).json({ error: "Internal server error" });

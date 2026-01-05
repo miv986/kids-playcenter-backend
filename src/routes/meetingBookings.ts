@@ -7,6 +7,8 @@ import { sendTemplatedEmail } from "../service/mailing";
 import { getMeetingBookingCreatedEmail, getMeetingBookingModifiedEmail, getMeetingBookingCancelledEmail } from "../service/emailTemplates";
 import prisma from "../utils/prisma";
 import { executeWithRetry } from "../utils/transactionRetry";
+// ✅ NUEVO: Importar funciones de timezone unificado
+import { formatForAPI } from "../utils/timezone";
 
 const router = express.Router();
 
@@ -202,7 +204,23 @@ router.get("/", authenticateUser, async (req: any, res: any) => {
                 { createdAt: "asc" }
             ]
         });
-        res.json(bookings);
+        
+        // ✅ Formatear fechas usando timezone unificado
+        const formattedBookings = bookings.map(booking => ({
+            ...booking,
+            createdAt: formatForAPI(booking.createdAt),
+            updatedAt: formatForAPI(booking.updatedAt),
+            slot: booking.slot ? {
+                ...booking.slot,
+                date: formatForAPI(booking.slot.date),
+                startTime: formatForAPI(booking.slot.startTime),
+                endTime: formatForAPI(booking.slot.endTime),
+                createdAt: formatForAPI(booking.slot.createdAt),
+                updatedAt: formatForAPI(booking.slot.updatedAt),
+            } : null,
+        }));
+        
+        res.json(formattedBookings);
     } catch (err) {
         console.error("Error listando reservas de meeting:", err);
         res.status(500).json({ error: "Internal server error" });

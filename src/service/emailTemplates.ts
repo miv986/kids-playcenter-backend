@@ -1,3 +1,6 @@
+// ✅ Importar funciones de timezone unificado
+import { formatTimeForEmail, formatDateForEmail } from '../utils/timezone';
+
 export interface EmailTemplateData {
     title: string;
     greeting?: string; // "Hola [nombre]"
@@ -9,42 +12,22 @@ export interface EmailTemplateData {
 
 /**
  * Formatea una fecha a hora local (HH:MM) en zona horaria de Madrid
- * Usa el mismo método que los slots: getHours() directamente del Date object
- * Cuando Prisma devuelve un Date, JavaScript ya convierte el timestamp UTC a hora local
+ * ✅ ACTUALIZADO: Usa el sistema de timezone unificado
  * 
  * Nota: Los emails HTML estáticos no pueden detectar la zona horaria del destinatario
  * automáticamente (JavaScript está bloqueado en la mayoría de clientes de email).
  * Esta es la práctica estándar usada por servicios como restaurantes, eventos, etc.
  */
 function formatTime(date: Date): string {
-    // Usar getHours() directamente, igual que los slots
-    // JavaScript convierte automáticamente el timestamp UTC de Prisma a hora local del sistema
-    const localDate = date instanceof Date ? date : new Date(date);
-    const hours = String(localDate.getHours()).padStart(2, '0');
-    const minutes = String(localDate.getMinutes()).padStart(2, '0');
-    
-    // Obtener la zona horaria (CET en invierno, CEST en verano)
-    const formatter = new Intl.DateTimeFormat('es-ES', {
-        timeZone: 'Europe/Madrid',
-        timeZoneName: 'short'
-    });
-    const parts = formatter.formatToParts(date);
-    const timeZoneName = parts.find(p => p.type === 'timeZoneName')?.value || 'CET';
-
-    return `${hours}:${minutes} (${timeZoneName})`;
+    return formatTimeForEmail(date);
 }
 
 /**
  * Formatea una fecha a formato de fecha local sin mostrar zona horaria
+ * ✅ ACTUALIZADO: Usa el sistema de timezone unificado
  */
 function formatDate(date: Date): string {
-    return date.toLocaleDateString('es-ES', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        timeZone: 'Europe/Madrid'
-    });
+    return formatDateForEmail(date, 'es');
 }
 
 export function getEmailTemplate(data: EmailTemplateData): string {
