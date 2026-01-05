@@ -45,15 +45,6 @@ export async function initializePrisma(maxRetries = 10, delayMs = 2000): Promise
         await prisma.$connect();
         await prisma.$queryRaw`SELECT 1`;
 
-        // Configurar listeners para detectar desconexiones
-        prisma.$on('error' as any, (e: any) => {
-          console.warn('⚠️ Prisma error event:', e);
-          if (isConnectionError(e)) {
-            isConnected = false;
-            console.warn('⚠️ Prisma marcado como desconectado debido a error de conexión');
-          }
-        });
-
         console.log('✅ Prisma conectado correctamente');
         isConnected = true;
         return;
