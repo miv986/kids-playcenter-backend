@@ -195,12 +195,28 @@ export default app;
 import { isPrismaConnected, getPrisma } from './utils/prisma';
 import { initializeScheduledJobs } from './jobs/bookingScheduler';
 
-
-setInterval(() => {
+// Keep-alive: ping periódico a la DB para mantenerla activa y detectar desconexiones
+setInterval(async () => {
   if (isPrismaConnected()) {
-    console.log('⏰ Prisma conectado, asegurando cron jobs activos');
-    initializeScheduledJobs().catch((err) => {
-      console.error('⚠️ Error re-inicializando cron jobs:', err.message);
-    });
+    try {
+      const prisma = getPrisma();
+      // Ping simple para mantener la conexión activa
+      await prisma.$queryRaw`SELECT 1`;
+      // Asegurar que los cron jobs estén activos
+      initializeScheduledJobs().catch((err) => {
+        console.error('⚠️ Error re-inicializando cron jobs:', err.message);
+      });
+    } catch (error: any) {
+      // Si el ping falla, marcar como desconectado para que el siguiente intento reconecte
+      console.warn('⚠️ Keep-alive ping falló, la conexión puede haberse perdido:', error.message);
+      const { isPrismaConnected: checkConnected } = await import('./utils/prisma');
+      if (!checkConnected()) {
+        // Intentar reconectar en background
+        const { initializePrisma } = await import('./utils/prisma');
+        initializePrisma(10, 2000).catch(() => {
+          // Silencioso, ya se reintentará en la próxima petición
+        });
+      }
+    }
   }
 }, 30000); // cada 30s

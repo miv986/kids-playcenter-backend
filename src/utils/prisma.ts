@@ -152,9 +152,9 @@ async function attemptReconnect(): Promise<boolean> {
     return true;
   }
   
-  // Intentar reconectar con menos reintentos para no bloquear
+  // Intentar reconectar con más reintentos para esperar a que la DB se active (hasta 30 segundos)
   try {
-    await initializePrisma(3, 2000);
+    await initializePrisma(15, 2000); // 15 intentos x 2 segundos = 30 segundos máximo
     return isConnected;
   } catch {
     return false;
